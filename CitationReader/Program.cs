@@ -10,7 +10,6 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.RegisterCoreServices(builder.Configuration);
-builder.Services.BuildServiceProvider();
 
 var app = builder.Build();
 
