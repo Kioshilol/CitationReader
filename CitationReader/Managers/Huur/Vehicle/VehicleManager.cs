@@ -1,9 +1,13 @@
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading.Tasks;
 using CitationReader.Configuration;
 using CitationReader.Enums;
 using CitationReader.Managers.Base;
 using CitationReader.Models.Base;
 using CitationReader.Models.Huur;
 using CitationReader.Providers.Cache;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CitationReader.Managers.Huur.Vehicle
@@ -24,7 +28,7 @@ namespace CitationReader.Managers.Huur.Vehicle
 
         public Task<BaseResponse<IEnumerable<ExternalVehicleDto>>> GetExternalVehiclesAsync()
         {
-            _logger.LogInformation("Fetching external vehicles from API");
+            Logger.LogInformation("Fetching external vehicles from API");
             
             var token = _tokenCacheProvider.GetCachedToken();
             return RequestAsync<IEnumerable<ExternalVehicleDto>>(

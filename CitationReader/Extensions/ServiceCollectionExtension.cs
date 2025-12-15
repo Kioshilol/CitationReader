@@ -5,6 +5,9 @@ using CitationReader.Managers.Huur.Vehicle;
 using CitationReader.Providers.Cache;
 using CitationReader.Services.Huur.Auth;
 using CitationReader.Services.Huur.Vehicle;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace CitationReader.Extensions;
 

@@ -1,6 +1,8 @@
+using System.Threading.Tasks;
 using CitationReader.Managers.Huur.Auth;
 using CitationReader.Models.Huur.Requests;
 using CitationReader.Providers.Cache;
+using Microsoft.Extensions.Logging;
 
 namespace CitationReader.Services.Huur.Auth
 {

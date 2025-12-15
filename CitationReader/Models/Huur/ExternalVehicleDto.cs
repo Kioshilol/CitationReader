@@ -1,4 +1,6 @@
-﻿namespace CitationReader.Models.Huur;
+﻿using System;
+
+namespace CitationReader.Models.Huur;
 
 public class ExternalVehicleDto
 {

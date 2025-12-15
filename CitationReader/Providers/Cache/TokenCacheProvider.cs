@@ -1,4 +1,6 @@
+using System;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 
 namespace CitationReader.Providers.Cache
 {

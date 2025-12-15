@@ -1,18 +1,23 @@
-﻿using System.Text;
+﻿using System;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using CitationReader.Configuration;
 using CitationReader.Enums;
 using CitationReader.Models.Base;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CitationReader.Managers.Base;
 
 public abstract class BaseHttpManager
 {
-    protected readonly IHttpClientFactory _httpClientFactory;
-    protected readonly HuurOptions _options;
-    protected readonly ILogger _logger;
-    protected readonly HttpClientType _httpClientType;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly HuurOptions _options;
+    private readonly HttpClientType _httpClientType;
+
+    protected readonly ILogger Logger;
 
     protected BaseHttpManager(
         HttpClientType httpClientType,
@@ -22,7 +27,7 @@ public abstract class BaseHttpManager
     {
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
-        _logger = logger;
+        Logger = logger;
         _httpClientType = httpClientType;
     }
 
@@ -34,7 +39,7 @@ public abstract class BaseHttpManager
     {
         var requestUri = $"{_options.BaseUrl.TrimEnd('/')}/{endpoint.TrimStart('/')}";
 
-        _logger.LogInformation("Making {Method} request to {Uri}", method.Method, requestUri);
+        Logger.LogInformation("Making {Method} request to {Uri}", method.Method, requestUri);
 
         try
         {
@@ -44,7 +49,7 @@ public abstract class BaseHttpManager
             if (!string.IsNullOrEmpty(token))
             {
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                _logger.LogDebug("Added Authorization header with Bearer token");
+                Logger.LogDebug("Added Authorization header with Bearer token");
             }
 
             if (requestBody != null &&
@@ -53,21 +58,21 @@ public abstract class BaseHttpManager
                 var jsonContent = JsonSerializer.Serialize(requestBody);
                 request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
 
-                _logger.LogDebug("Request body: {RequestBody}", jsonContent);
+                Logger.LogDebug("Request body: {RequestBody}", jsonContent);
             }
 
             using var httpClient = _httpClientFactory.CreateClient(_httpClientType.ToString());
             using var response = await httpClient.SendAsync(request);
             var responseContent = await response.Content.ReadAsStringAsync();
 
-            _logger.LogInformation("Response status: {StatusCode}", response.StatusCode);
-            _logger.LogDebug("Response content: {ResponseContent}", responseContent);
+            Logger.LogInformation("Response status: {StatusCode}", response.StatusCode);
+            Logger.LogDebug("Response content: {ResponseContent}", responseContent);
 
             if (response.IsSuccessStatusCode)
             {
                 if (string.IsNullOrEmpty(responseContent))
                 {
-                    _logger.LogWarning("Received empty response content");
+                    Logger.LogWarning("Received empty response content");
                     return BaseResponse<T>.Failure(204, "Empty response content");
                 }
 
@@ -80,16 +85,16 @@ public abstract class BaseHttpManager
 
                     if (result != null)
                     {
-                        _logger.LogInformation("Successfully deserialized response to {Type}", typeof(T).Name);
+                        Logger.LogInformation("Successfully deserialized response to {Type}", typeof(T).Name);
                         return BaseResponse<T>.Success(result, "Request completed successfully");
                     }
 
-                    _logger.LogWarning("Deserialized response is null");
+                    Logger.LogWarning("Deserialized response is null");
                     return BaseResponse<T>.Failure(422, "Failed to deserialize response");
                 }
                 catch (JsonException ex)
                 {
-                    _logger.LogWarning(ex, "Failed to deserialize response as {Type}", typeof(T).Name);
+                    Logger.LogWarning(ex, "Failed to deserialize response as {Type}", typeof(T).Name);
                     return BaseResponse<T>.Failure(422, $"JSON deserialization failed: {ex.Message}", ex.StackTrace);
                 }
             }
@@ -98,22 +103,22 @@ public abstract class BaseHttpManager
             var statusCode = (int)response.StatusCode;
             var errorMessage = GetErrorMessageForStatusCode(statusCode, responseContent);
             
-            _logger.LogError("API request failed with status {StatusCode}: {ResponseContent}", statusCode, responseContent);
+            Logger.LogError("API request failed with status {StatusCode}: {ResponseContent}", statusCode, responseContent);
             return BaseResponse<T>.Failure(statusCode, errorMessage);
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "HTTP request exception occurred");
+            Logger.LogError(ex, "HTTP request exception occurred");
             return BaseResponse<T>.Failure(500, $"HTTP request failed: {ex.Message}", ex.StackTrace);
         }
         catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
         {
-            _logger.LogError(ex, "Request timeout occurred");
+            Logger.LogError(ex, "Request timeout occurred");
             return BaseResponse<T>.Failure(408, "Request timeout");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error occurred during HTTP request");
+            Logger.LogError(ex, "Unexpected error occurred during HTTP request");
             return BaseResponse<T>.Failure(-1, $"Unexpected error: {ex.Message}", ex.StackTrace);
         }
     }
