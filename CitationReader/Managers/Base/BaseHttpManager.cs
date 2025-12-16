@@ -1,12 +1,8 @@
-﻿using System;
-using System.Net.Http;
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 using CitationReader.Configuration;
 using CitationReader.Enums;
 using CitationReader.Models.Base;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CitationReader.Managers.Base;

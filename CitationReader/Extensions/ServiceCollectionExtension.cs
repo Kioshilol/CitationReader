@@ -1,8 +1,10 @@
 ﻿using CitationReader.Configuration;
 using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Managers.Huur.Auth;
 using CitationReader.Managers.Huur.Vehicle;
 using CitationReader.Providers.Cache;
+using CitationReader.Services.Citation;
 using CitationReader.Services.Huur.Auth;
 using CitationReader.Services.Huur.Vehicle;
 using Microsoft.Extensions.Configuration;
@@ -19,7 +21,7 @@ public static class ServiceCollectionExtension
 
         services.AddHttpClient(HttpClientType.Auth.ToString());
         services.AddHttpClient(HttpClientType.HuurApi.ToString());
-        services.AddHttpClient(HttpClientType.External.ToString());
+        services.AddHttpClient(HttpClientType.CitationReader.ToString());
 
         // Register memory cache
         services.AddMemoryCache();
@@ -40,11 +42,11 @@ public static class ServiceCollectionExtension
 
     private static void RegisterServices(IServiceCollection services)
     {
-        // Auth services
         services.AddScoped<IAuthService, AuthService>();
-        
-        // External services
         services.AddScoped<IVehicleService, VehicleService>();
+        services.AddScoped<ICitationService, CitationService>();
+        
+        services.AddAllCitationReaders();
     }
     
     private static void RegisterManagers(IServiceCollection services)
