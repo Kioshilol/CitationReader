@@ -22,10 +22,12 @@ app.UseStaticFiles();
 app.UseAntiforgery();
 
 app.MapStaticAssets();
-app.MapRazorComponents<CitationReader.Components.App>()
+app
+    .MapRazorComponents<CitationReader.Components.App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
 
 public partial class Program
 {

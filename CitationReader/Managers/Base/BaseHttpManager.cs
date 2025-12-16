@@ -22,6 +22,7 @@ public abstract class BaseHttpManager
     protected BaseHttpManager(HttpClientType httpClientType)
     {
         _httpClientType = httpClientType;
+        
         _httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
         _options = Program.ServiceProvider.GetService<IOptions<HuurOptions>>()!.Value;
         Logger = Program.ServiceProvider.GetService<ILogger>()!;
