@@ -1,4 +1,5 @@
-﻿using CitationReader.Configuration;
+﻿using System.Net;
+using CitationReader.Configuration;
 using CitationReader.Enums;
 using CitationReader.Extensions;
 using CitationReader.Managers.Huur.Auth;
@@ -21,7 +22,29 @@ public static class ServiceCollectionExtension
 
         services.AddHttpClient(HttpClientType.Auth.ToString());
         services.AddHttpClient(HttpClientType.HuurApi.ToString());
-        services.AddHttpClient(HttpClientType.CitationReader.ToString());
+        services
+            .AddHttpClient(HttpClientType.CitationReader.ToString())
+            .ConfigureHttpClient((_, httpClient) =>
+            {
+                httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
+                );
+                httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/json, text/plain, */*");
+                httpClient.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.9");
+                httpClient.DefaultRequestHeaders.Referrer = new Uri("https://site.metropolis.io/");
+                httpClient.DefaultRequestHeaders.Add("Origin", "https://site.metropolis.io");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                var cookieJar = new CookieContainer();
+                return new HttpClientHandler
+                {
+                    UseCookies = true,
+                    CookieContainer = cookieJar,
+                    AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip
+                };
+            });
+        
 
         // Register memory cache
         services.AddMemoryCache();
@@ -51,10 +74,7 @@ public static class ServiceCollectionExtension
     
     private static void RegisterManagers(IServiceCollection services)
     {
-        // Auth managers
         services.AddScoped<IAuthManager, AuthManager>();
-        
-        // External managers
         services.AddScoped<IVehicleManager, VehicleManager>();
     }
     

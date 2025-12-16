@@ -70,9 +70,17 @@ namespace CitationReader.Providers.Cache
 
         public void ClearToken()
         {
-            _logger.LogInformation("Clearing cached token");
-            _memoryCache.Remove(TokenCacheKey);
-            _memoryCache.Remove(ExpirationCacheKey);
+            try
+            {
+                _logger.LogInformation("Clearing cached token");
+
+                _memoryCache.Remove(TokenCacheKey);
+                _memoryCache.Remove(ExpirationCacheKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error clearing cache token");
+            }
         }
     }
 }

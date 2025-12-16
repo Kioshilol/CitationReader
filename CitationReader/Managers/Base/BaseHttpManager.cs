@@ -2,32 +2,107 @@
 using System.Text.Json;
 using CitationReader.Configuration;
 using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Models.Base;
+using CitationReader.Services.Huur.Auth;
 using Microsoft.Extensions.Options;
 
 namespace CitationReader.Managers.Base;
 
 public abstract class BaseHttpManager
 {
+    private const int MaxRetries = 5;
+    private const int RetryDelayMs = 1000;
+    private const int UnauthorizedReason = 401;
+    
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly HuurOptions _options;
     private readonly HttpClientType _httpClientType;
 
+    protected BaseHttpManager(HttpClientType httpClientType)
+    {
+        _httpClientType = httpClientType;
+        _httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
+        _options = Program.ServiceProvider.GetService<IOptions<HuurOptions>>()!.Value;
+        Logger = Program.ServiceProvider.GetService<ILogger>()!;
+    }
+    
     protected readonly ILogger Logger;
 
-    protected BaseHttpManager(
-        HttpClientType httpClientType,
-        IHttpClientFactory httpClientFactory,
-        IOptions<HuurOptions> options,
-        ILogger logger)
+    protected async Task<BaseResponse<T>> RequestAsync<T>(
+        HttpMethod method,
+        string endpoint,
+        object? requestBody = null,
+        string? token = null) where T : class
     {
-        _httpClientFactory = httpClientFactory;
-        _options = options.Value;
-        Logger = logger;
-        _httpClientType = httpClientType;
+        for (var attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            var delay = RetryDelayMs * (int)Math.Pow(2, attempt);
+            try
+            {
+                var result = await ExecuteRequestAsync<T>(method, endpoint, requestBody, token);
+                if (result.IsSuccess)
+                {
+                    return result;
+                }
+
+                if (attempt >= MaxRetries - 1)
+                {
+                    return result;
+                }
+                
+                if (result.Reason == UnauthorizedReason)
+                {
+                    Logger.LogWarning(
+                        "Received 401 Unauthorized, attempting token refresh. Attempt {Attempt}/{MaxRetries}",
+                        attempt + 1,
+                        MaxRetries);
+
+                    var refreshed = await RefreshTokenAsync();
+                    if (refreshed)
+                    {
+                        await Task.Delay(delay);
+                        continue;
+                    }
+
+                    Logger.LogError("Failed to refresh token, returning 401 error");
+                    return result;
+                }
+                
+                Logger.LogWarning(
+                    "Request failed with reason {Reason}, retrying. Attempt {Attempt}/{MaxRetries}",
+                    result.Reason,
+                    attempt + 1,
+                    MaxRetries);
+                    
+                await Task.Delay(delay);
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries - 1)
+            {
+                Logger.LogWarning(
+                    ex, 
+                    "HTTP request failed on attempt {Attempt}/{MaxRetries}, retrying...", 
+                    attempt + 1,
+                    MaxRetries);
+                
+                await Task.Delay(delay);
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException && attempt < MaxRetries - 1)
+            {
+                Logger.LogWarning(
+                    ex, 
+                    "Request timeout on attempt {Attempt}/{MaxRetries}, retrying...", 
+                    attempt + 1, 
+                    MaxRetries);
+                
+                await Task.Delay(delay);
+            }
+        }
+
+        return await ExecuteRequestAsync<T>(method, endpoint, requestBody, token);
     }
 
-    protected async Task<BaseResponse<T>> RequestAsync<T>(
+    private async Task<BaseResponse<T>> ExecuteRequestAsync<T>(
         HttpMethod method,
         string endpoint,
         object? requestBody = null,
@@ -41,15 +116,13 @@ public abstract class BaseHttpManager
         {
             using var request = new HttpRequestMessage(method, requestUri);
 
-            // Add Authorization header if token is provided
             if (!string.IsNullOrEmpty(token))
             {
                 request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
                 Logger.LogDebug("Added Authorization header with Bearer token");
             }
 
-            if (requestBody != null &&
-                (method == HttpMethod.Post || method == HttpMethod.Put || method == HttpMethod.Patch))
+            if (requestBody != null)
             {
                 var jsonContent = JsonSerializer.Serialize(requestBody);
                 request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
@@ -95,9 +168,8 @@ public abstract class BaseHttpManager
                 }
             }
 
-            // Handle HTTP error status codes
             var statusCode = (int)response.StatusCode;
-            var errorMessage = GetErrorMessageForStatusCode(statusCode, responseContent);
+            var errorMessage = HttpStatusCodeExtensions.GetErrorMessageForStatusCode(statusCode, responseContent);
             
             Logger.LogError("API request failed with status {StatusCode}: {ResponseContent}", statusCode, responseContent);
             return BaseResponse<T>.Failure(statusCode, errorMessage);
@@ -119,22 +191,25 @@ public abstract class BaseHttpManager
         }
     }
 
-    private static string GetErrorMessageForStatusCode(int statusCode, string responseContent)
+    private async Task<bool> RefreshTokenAsync()
     {
-        return statusCode switch
+        try
         {
-            400 => "Bad request",
-            401 => "Unauthorized",
-            403 => "Forbidden",
-            404 => "Not found",
-            409 => "Conflict",
-            422 => "Unprocessable entity",
-            429 => "Too many requests",
-            500 => "Internal server error",
-            502 => "Bad gateway",
-            503 => "Service unavailable",
-            504 => "Gateway timeout",
-            _ => $"HTTP {statusCode}: {responseContent}"
-        };
+            if (_httpClientType == HttpClientType.Auth)
+            {
+                Logger.LogDebug("Skipping token refresh for AuthManager to avoid circular dependency");
+                return false;
+            }
+
+            var authManager = Program.ServiceProvider.GetService<IAuthService>()!;
+            var isSuccess = await authManager.TryAuthorizeAsync();
+            return isSuccess;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Exception occurred while refreshing token");
+            return false;
+        }
     }
+
 }

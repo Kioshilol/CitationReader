@@ -150,7 +150,7 @@ else
     {
         try
         {
-            var isSuccess = await AuthService.TrySignInAsync();
+            var isSuccess = await AuthService.TryAuthorizeAsync();
             if (!isSuccess)
             {
                 return;

@@ -10,15 +10,12 @@ namespace CitationReader.Managers.Huur.Auth
 {
     public class AuthManager : BaseHttpManager, IAuthManager
     {
-        public AuthManager(
-            IHttpClientFactory httpClientFactory,
-            IOptions<HuurOptions> options, 
-            ILogger<AuthManager> logger) 
-            : base(HttpClientType.Auth, httpClientFactory, options, logger)
+        public AuthManager() 
+            : base(HttpClientType.Auth)
         {
         }
 
-        public Task<BaseResponse<AuthDto>> SignInAsync(SignInRequest request)
+        public Task<BaseResponse<AuthDto>> AuthorizeAsync(SignInRequest request)
         {
             Logger.LogInformation("Starting sign-in process for user: {Email}", request.Email);
             

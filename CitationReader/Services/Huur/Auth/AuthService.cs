@@ -25,12 +25,14 @@ namespace CitationReader.Services.Huur.Auth
             _options = options.Value;
         }
 
-        public async Task<bool> TrySignInAsync()
+        public async Task<bool> TryAuthorizeAsync()
         {
+            _tokenCacheProvider.ClearToken();
+            
             var request = new SignInRequest(
                 _options.Auth.Email, 
                 _options.Auth.Password);
-            var response = await _authManager.SignInAsync(request);
+            var response = await _authManager.AuthorizeAsync(request);
             var result = response.Result;
             if (!response.IsSuccess || result is null)
             { 

@@ -1,19 +1,16 @@
 using CitationReader.Extensions;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container
-builder.Services.AddRazorComponents()
+builder.Services
+    .AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.RegisterCoreServices(builder.Configuration);
 
 var app = builder.Build();
+ServiceProvider = app.Services;
 
-// Configure the HTTP request pipeline
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -29,3 +26,8 @@ app.MapRazorComponents<CitationReader.Components.App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+public partial class Program
+{
+    public static IServiceProvider ServiceProvider { get; private set; }
+}

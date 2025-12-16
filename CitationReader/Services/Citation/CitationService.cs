@@ -33,7 +33,7 @@ public class CitationService : ICitationService
         
         try
         {
-            var isSuccess = await _authService.TrySignInAsync();
+            var isSuccess = await _authService.TryAuthorizeAsync();
             if (!isSuccess)
             {
                 return null;

@@ -8,14 +8,13 @@ using CitationReader.Readers.Interfaces;
 
 namespace CitationReader.Readers;
 
-public class VanguardCitationReader : HttpReader, ICitationReader
+public class VanguardCitationReader : ICitationReader
 {
     private const string Name = "Vanguard";
     private const string Url = "https://www.payparkingnotice.com/api/";
     
     private readonly ILogger<VanguardCitationReader> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
-    
 
     public VanguardCitationReader(
         ILogger<VanguardCitationReader> logger,
@@ -37,7 +36,8 @@ public class VanguardCitationReader : HttpReader, ICitationReader
         var requestUrl =
             $"{Url}lookup?method=lpnLookup&lpn={Uri.EscapeDataString(licensePlate)}&lpnState={Uri.EscapeDataString(state)}&includeAll=true/";
 
-        var response = await HttpClient.GetAsync(requestUrl);
+        var client = _httpClientFactory.CreateClient(HttpClientType.CitationReader.ToString());
+        var response = await client.GetAsync(requestUrl);
         if (!response.IsSuccessStatusCode)
         {
             return ArraySegment<CitationDto>.Empty;
@@ -74,7 +74,9 @@ public class VanguardCitationReader : HttpReader, ICitationReader
                     EndDate = ParseDateTime(violation.ExitTime),
                     Amount = decimal.TryParse(violation.AmountDue, out var amount) ? amount : 0,
                     Currency = "USD",
-                    PaymentStatus = violation.TicketStatus.ToLower() != "paid" ? Constants.FineConstants.PNew : Constants.FineConstants.PPaid,
+                    PaymentStatus = violation.TicketStatus.ToLower() != "paid" 
+                        ? Constants.FineConstants.PNew 
+                        : Constants.FineConstants.PPaid,
                     FineType = Constants.FineConstants.FtParking,
                     IsActive = violation.TicketStatus.ToLower() != "paid",
                     Link = Url

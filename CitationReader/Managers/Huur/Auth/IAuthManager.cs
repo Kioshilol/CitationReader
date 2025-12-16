@@ -6,6 +6,6 @@ namespace CitationReader.Managers.Huur.Auth
 {
     public interface IAuthManager
     {
-        Task<BaseResponse<AuthDto>> SignInAsync(SignInRequest request);
+        Task<BaseResponse<AuthDto>> AuthorizeAsync(SignInRequest request);
     }
 }
