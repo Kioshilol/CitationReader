@@ -1,7 +1,9 @@
 @page "/external-vehicles"
 @using CitationReader.Services.Huur.Vehicle
 @using CitationReader.Models.Huur
+@using CitationReader.Services.Huur.Auth
 @inject IVehicleService VehicleService
+@inject IAuthService AuthService
 
 <PageTitle>External Vehicles</PageTitle>
 
@@ -148,9 +150,14 @@ else
     {
         try
         {
-            var response = await VehicleService.GetExternalVehiclesAsync();
+            var isSuccess = await AuthService.TrySignInAsync();
+            if (!isSuccess)
+            {
+                return;
+            }
             
-            if (response.IsSuccess && response.Result != null)
+            var response = await VehicleService.GetExternalVehiclesAsync();
+            if (response is { IsSuccess: true, Result: not null })
             {
                 vehicles = response.Result;
             }

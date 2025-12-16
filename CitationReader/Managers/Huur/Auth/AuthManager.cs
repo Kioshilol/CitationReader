@@ -1,12 +1,9 @@
-using System.Net.Http;
-using System.Threading.Tasks;
 using CitationReader.Configuration;
 using CitationReader.Enums;
 using CitationReader.Managers.Base;
 using CitationReader.Models;
 using CitationReader.Models.Base;
 using CitationReader.Models.Huur.Requests;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace CitationReader.Managers.Huur.Auth

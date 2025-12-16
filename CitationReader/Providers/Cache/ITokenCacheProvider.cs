@@ -1,5 +1,3 @@
-using System;
-
 namespace CitationReader.Providers.Cache
 {
     public interface ITokenCacheProvider

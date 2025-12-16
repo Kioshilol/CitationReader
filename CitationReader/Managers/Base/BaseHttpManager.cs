@@ -78,15 +78,15 @@ public abstract class BaseHttpManager
 
                 try
                 {
-                    var result = JsonSerializer.Deserialize<T>(responseContent, new JsonSerializerOptions
+                    var result = JsonSerializer.Deserialize<BaseResponse<T>>(responseContent, new JsonSerializerOptions
                     {
-                        PropertyNameCaseInsensitive = true
+                        PropertyNameCaseInsensitive = false
                     });
 
                     if (result != null)
                     {
                         Logger.LogInformation("Successfully deserialized response to {Type}", typeof(T).Name);
-                        return BaseResponse<T>.Success(result, "Request completed successfully");
+                        return result;
                     }
 
                     Logger.LogWarning("Deserialized response is null");

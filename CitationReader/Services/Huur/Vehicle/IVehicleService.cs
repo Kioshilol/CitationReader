@@ -1,5 +1,3 @@
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using CitationReader.Models.Base;
 using CitationReader.Models.Huur;
 
