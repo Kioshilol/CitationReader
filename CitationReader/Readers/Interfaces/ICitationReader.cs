@@ -1,16 +1,17 @@
 ﻿using CitationReader.Enums;
 using CitationReader.Models.Citation;
+using CitationReader.Models.Citation.Internal;
 using CitationReader.Models.Huur;
 
 namespace CitationReader.Readers.Interfaces;
 
 public interface ICitationReader
 {
-    CitationType SupportedType { get; }
+    CitationProviderType SupportedProviderType { get; }
     
     string Link { get; }
 
-    Task<BaseCitationResponse<IEnumerable<CitationDto>>> ReadCitationsWithResponseAsync(
+    Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsWithResponseAsync(
         string licensePlate,
         string state);
 }

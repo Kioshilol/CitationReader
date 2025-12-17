@@ -1,8 +1,9 @@
-﻿using CitationReader.Models.Huur;
+﻿using CitationReader.Models.Citation.Internal;
+using CitationReader.Models.Huur;
 
 namespace CitationReader.Services.Citation;
 
 public interface ICitationService
 {
-    Task<IEnumerable<CitationDto>> ReadAllCitations();
+    Task<IEnumerable<CitationModel>> ReadAllCitations();
 }

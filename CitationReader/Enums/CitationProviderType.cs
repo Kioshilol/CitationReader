@@ -1,6 +1,6 @@
 ﻿namespace CitationReader.Enums;
 
-public enum CitationType
+public enum CitationProviderType
 {
     Vanguard
 }

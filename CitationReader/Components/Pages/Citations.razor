@@ -1,4 +1,5 @@
 @page "/citations"
+@using CitationReader.Models.Citation.Internal
 @using CitationReader.Services.Citation
 @using CitationReader.Models.Huur
 @inject ICitationService CitationService
@@ -160,8 +161,8 @@
 </div>
 
 @code {
-    private List<CitationDto> citations = new();
-    private IEnumerable<CitationDto> filteredCitations = new List<CitationDto>();
+    private List<CitationModel> citations = new();
+    private IEnumerable<CitationModel> filteredCitations = new List<CitationModel>();
     private bool isLoading = false;
     private string errorMessage = string.Empty;
     private string searchTerm = string.Empty;

@@ -1,10 +1,10 @@
 ﻿using CitationReader.Services.Huur.Vehicle;
 using CitationReader.Enums;
-using CitationReader.Models.Citation;
 using CitationReader.Models.Huur;
 using CitationReader.Readers.Interfaces;
 using CitationReader.Services.Huur.Auth;
 using System.Collections.Concurrent;
+using CitationReader.Models.Citation.Internal;
 
 namespace CitationReader.Services.Citation;
 
@@ -13,7 +13,7 @@ public class CitationService : ICitationService
     private readonly ILogger<CitationService> _logger;
     private readonly IVehicleService _vehicleService;
     private readonly IAuthService _authService;
-    private readonly Dictionary<CitationType, ICitationReader> _readers;
+    private readonly Dictionary<CitationProviderType, ICitationReader> _readers;
 
     public CitationService(
         IEnumerable<ICitationReader> readers,
@@ -24,16 +24,16 @@ public class CitationService : ICitationService
         _logger = logger;
         _vehicleService = vehicleService;
         _authService = authService;
-        _readers = readers.ToDictionary(r => r.SupportedType, r => r);
+        _readers = readers.ToDictionary(r => r.SupportedProviderType, r => r);
     }
 
-    public async Task<IEnumerable<CitationDto>> ReadAllCitations()
+    public async Task<IEnumerable<CitationModel>> ReadAllCitations()
     {
         var startTime = DateTime.UtcNow;
         _logger.LogInformation("Starting to read citations for all external vehicles");
         
-        var allCitations = new ConcurrentBag<CitationDto>();
-        var allErrors = new ConcurrentBag<CitationProcessingError>();
+        var allCitations = new ConcurrentBag<CitationModel>();
+        var allErrors = new ConcurrentBag<CitationError>();
         
         try
         {
@@ -66,7 +66,7 @@ public class CitationService : ICitationService
             }
             
             var availableProviders = Enum
-                .GetValues<CitationType>()
+                .GetValues<CitationProviderType>()
                 .Where(p => _readers.ContainsKey(p))
                 .ToList();
             
@@ -98,11 +98,16 @@ public class CitationService : ICitationService
             
             await Task.WhenAll(processingTasks);
             
-            var endTime = DateTime.UtcNow;
-            var duration = endTime - startTime;
-            
             var citationsList = allCitations.ToList();
             var errorsList = allErrors.ToList();
+
+            if (citationsList.Count <= 0)
+            {
+                return null;
+            }
+            
+            var endTime = DateTime.UtcNow;
+            var duration = endTime - startTime;
             
             _logger.LogInformation(
                 "Citation processing completed. Duration: {Duration:mm\\:ss}, " +
@@ -117,7 +122,7 @@ public class CitationService : ICitationService
             if (errorsList.Any())
             {
                 var errorsByProvider = errorsList
-                    .GroupBy(e => e.Provider)
+                    .GroupBy(e => e.CitationProviderType)
                     .ToDictionary(g => g.Key, g => g.Count());
                 
                 foreach (var providerErrors in errorsByProvider)
@@ -129,12 +134,14 @@ public class CitationService : ICitationService
                 }
             }
             
-            var citationsByProvider = citationsList.GroupBy(c => c.Agency)
+            var citationsByProvider = citationsList
+                .GroupBy(c => c.CitationProviderType)
                 .ToDictionary(g => g.Key, g => g.Count());
             
             foreach (var providerCitations in citationsByProvider)
             {
-                _logger.LogInformation("Found {CitationCount} citations from {Provider}", 
+                _logger.LogInformation(
+                    "Found {CitationCount} citations from {Provider}", 
                     providerCitations.Value,
                     providerCitations.Key);
             }
@@ -150,26 +157,26 @@ public class CitationService : ICitationService
     
     private async Task ProcessVehicleProviderAsync(
         ExternalVehicleDto vehicle,
-        CitationType provider,
-        ConcurrentBag<CitationDto> allCitations,
-        ConcurrentBag<CitationProcessingError> allErrors,
+        CitationProviderType citationProviderProvider,
+        ConcurrentBag<CitationModel> allCitations,
+        ConcurrentBag<CitationError> allErrors,
         SemaphoreSlim semaphore)
     {
         await semaphore.WaitAsync();
         
         try
         {
-            if (!_readers.TryGetValue(provider, out var reader))
+            if (!_readers.TryGetValue(citationProviderProvider, out var reader))
             {
-                _logger.LogWarning("No reader found for provider {Provider}", provider);
+                _logger.LogWarning("No reader found for citationProviderProvider {Provider}", citationProviderProvider);
                 return;
             }
             
             _logger.LogDebug(
-                "Processing vehicle {Tag} ({State}) with provider {Provider}", 
+                "Processing vehicle {Tag} ({State}) with citationProviderProvider {Provider}", 
                 vehicle.Tag,
                 vehicle.State, 
-                provider);
+                citationProviderProvider);
             
             var response = await reader.ReadCitationsWithResponseAsync(
                 vehicle.Tag,
@@ -188,40 +195,28 @@ public class CitationService : ICitationService
                         "Found {Count} citations for vehicle {Tag} from {Provider}", 
                         citations.Count,
                         vehicle.Tag,
-                        provider);
+                        citationProviderProvider);
                 }
             }
             
             if (response.Error != null)
             {
-                var error = CitationProcessingError.FromCitationError(
-                    vehicle.Tag,
-                    vehicle.State,
-                    provider, 
-                    response.Error);
-                allErrors.Add(error);
+                allErrors.Add(response.Error);
                 
                 _logger.LogWarning(
                     "Error reading citations for vehicle {Tag} from {Provider}: {Error}", 
                     vehicle.Tag,
-                    provider, 
+                    citationProviderProvider, 
                     response.Error.Message);
             }
         }
         catch (Exception ex)
         {
-            var error = CitationProcessingError.FromException(
-                vehicle.Tag,
-                vehicle.State,
-                provider,
-                ex);
-            allErrors.Add(error);
-            
             _logger.LogError(
                 ex, 
-                "Exception reading citations for vehicle {Tag} from provider {Provider}", 
+                "Exception reading citations for vehicle {Tag} from citationProviderProvider {Provider}", 
                 vehicle.Tag,
-                provider);
+                citationProviderProvider);
         }
         finally
         {

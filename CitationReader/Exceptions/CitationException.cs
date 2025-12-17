@@ -1,4 +1,5 @@
 using CitationReader.Models.Citation;
+using CitationReader.Models.Citation.Internal;
 
 namespace CitationReader.Exceptions;
 

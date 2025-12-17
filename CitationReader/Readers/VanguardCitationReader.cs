@@ -1,7 +1,7 @@
 using CitationReader.Common;
 using CitationReader.Enums;
 using CitationReader.Models.Citation;
-using CitationReader.Models.Huur;
+using CitationReader.Models.Citation.Internal;
 using CitationReader.Readers.Base;
 using CitationReader.Readers.Interfaces;
 
@@ -17,10 +17,10 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
     {
     }
 
-    public CitationType SupportedType => CitationType.Vanguard;
+    public CitationProviderType SupportedProviderType => CitationProviderType.Vanguard;
     public string Link => "https://www.payparkingnotice.com/";
 
-    public async Task<BaseCitationResponse<IEnumerable<CitationDto>>> ReadCitationsWithResponseAsync(
+    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsWithResponseAsync(
         string licensePlate,
         string state)
     {
@@ -35,8 +35,9 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                 var errorMessage = response.Message ?? "API request failed";
                 Logger.LogWarning("Vanguard API request failed for {CarDetails}: {ErrorMessage}", carDetails, errorMessage);
                 
-                return BaseCitationResponse<IEnumerable<CitationDto>>.CreateError(
+                return BaseCitationResult<IEnumerable<CitationModel>>.CreateError(
                     errorMessage,
+                    SupportedProviderType,
                     carDetails,
                     state,
                     response.Reason);
@@ -46,15 +47,15 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
             if (notices is null || notices.Count <= 0)
             {
                 Logger.LogInformation("No citations found for vehicle: {CarDetails}", carDetails);
-                return BaseCitationResponse<IEnumerable<CitationDto>>.CreateSuccess(
-                    ArraySegment<CitationDto>.Empty,
+                return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
+                    ArraySegment<CitationModel>.Empty,
                     state);
             }
             
             var citations = ProduceItems(notices).ToList();
             Logger.LogInformation("Found {Count} citations for vehicle: {CarDetails}", citations.Count, carDetails);
             
-            return BaseCitationResponse<IEnumerable<CitationDto>>.CreateSuccess(citations, state);
+            return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(citations, state);
         }
         catch (Exception ex)
         {
@@ -63,19 +64,20 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                 "Exception occurred while reading citations for vehicle: {CarDetails}",
                 carDetails);
             
-            return BaseCitationResponse<IEnumerable<CitationDto>>.CreateError(
+            return BaseCitationResult<IEnumerable<CitationModel>>.CreateError(
                 "Exception occurred while reading citations: " + ex.Message,
+                SupportedProviderType,
                 carDetails,
                 state,
                 -1);
         }
     }
     
-    private IEnumerable<CitationDto> ProduceItems(IEnumerable<VanguardResponse.Notice> items)
+    private IEnumerable<CitationModel> ProduceItems(IEnumerable<VanguardResponse.Notice> items)
     {
         foreach (var item in items)
         {
-            var parkingViolation = new CitationDto
+            var parkingViolation = new CitationModel
             {
                 NoticeNumber = item.NoticeNumber,
                 Agency = Name,
@@ -94,7 +96,8 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                     : Constants.FineConstants.PPaid,
                 FineType = Constants.FineConstants.FtParking,
                 IsActive = item.TicketStatus.ToLower() != "paid",
-                Link = Link
+                Link = Link,
+                CitationProviderType = SupportedProviderType
             };
 
             yield return parkingViolation;
