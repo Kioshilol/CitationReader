@@ -7,5 +7,7 @@ public interface ICitationReader
 {
     CitationType SupportedType { get; }
     
+    string Link { get; }
+    
     Task<IEnumerable<CitationDto>> ReadCitationsAsync(string licensePlate, string state);
 }

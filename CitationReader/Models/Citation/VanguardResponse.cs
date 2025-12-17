@@ -4,14 +4,11 @@ namespace CitationReader.Models.Citation;
 
 public class VanguardResponse
 {
-    public class VanGuardResponse
-    {
-        [JsonPropertyName("recordsFound")]
-        public int RecordsFound { get; set; }
+    [JsonPropertyName("recordsFound")]
+    public int RecordsFound { get; set; }
 
-        [JsonPropertyName("notices")]
-        public List<Notice> Notices { get; set; } = new();
-    }
+    [JsonPropertyName("notices")]
+    public List<Notice> Notices { get; set; }
     
     public class Notice
     {
