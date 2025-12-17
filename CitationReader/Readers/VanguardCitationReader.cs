@@ -20,29 +20,55 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
     public CitationType SupportedType => CitationType.Vanguard;
     public string Link => "https://www.payparkingnotice.com/";
 
-    public async Task<IEnumerable<CitationDto>> ReadCitationsAsync(string licensePlate, string state)
+    public async Task<BaseCitationResponse<IEnumerable<CitationDto>>> ReadCitationsWithResponseAsync(
+        string licensePlate,
+        string state)
     {
-        Logger.LogInformation(
-            "Reading citations from Vanguard for vehicle: {Tag} ({LicensePlate})",
-            licensePlate, 
-            state);
-
-        var requestUrl = $"{Url}lookup?method=lpnLookup&lpn={Uri.EscapeDataString(licensePlate)}&lpnState={Uri.EscapeDataString(state)}&includeAll=true/";
-        var response = await RequestAsync<VanguardResponse>(
-            HttpMethod.Get, 
-            requestUrl);
-        if (!response.IsSuccess)
-        {
-            return null;
-        }
-
-        var notices = response.Result?.Notices;
-        if (notices is null || notices.Count <= 0)
-        {
-            return ArraySegment<CitationDto>.Empty;
-        }
+        var carDetails = $"{licensePlate} ({state})";
         
-        return ProduceItems(notices);
+        try
+        {
+            var requestUrl = $"{Url}lookup?method=lpnLookup&lpn={Uri.EscapeDataString(licensePlate)}&lpnState={Uri.EscapeDataString(state)}&includeAll=true/";
+            var response = await RequestAsync<VanguardResponse>(HttpMethod.Get, requestUrl);
+            if (!response.IsSuccess)
+            {
+                var errorMessage = response.Message ?? "API request failed";
+                Logger.LogWarning("Vanguard API request failed for {CarDetails}: {ErrorMessage}", carDetails, errorMessage);
+                
+                return BaseCitationResponse<IEnumerable<CitationDto>>.CreateError(
+                    errorMessage,
+                    carDetails,
+                    state,
+                    response.Reason);
+            }
+
+            var notices = response.Result?.Notices;
+            if (notices is null || notices.Count <= 0)
+            {
+                Logger.LogInformation("No citations found for vehicle: {CarDetails}", carDetails);
+                return BaseCitationResponse<IEnumerable<CitationDto>>.CreateSuccess(
+                    ArraySegment<CitationDto>.Empty,
+                    state);
+            }
+            
+            var citations = ProduceItems(notices).ToList();
+            Logger.LogInformation("Found {Count} citations for vehicle: {CarDetails}", citations.Count, carDetails);
+            
+            return BaseCitationResponse<IEnumerable<CitationDto>>.CreateSuccess(citations, state);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "Exception occurred while reading citations for vehicle: {CarDetails}",
+                carDetails);
+            
+            return BaseCitationResponse<IEnumerable<CitationDto>>.CreateError(
+                "Exception occurred while reading citations: " + ex.Message,
+                carDetails,
+                state,
+                -1);
+        }
     }
     
     private IEnumerable<CitationDto> ProduceItems(IEnumerable<VanguardResponse.Notice> items)
@@ -74,7 +100,6 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
             yield return parkingViolation;
         }
     }
-
     
     private static DateTime ParseDateTime(string dateTimeString)
     {

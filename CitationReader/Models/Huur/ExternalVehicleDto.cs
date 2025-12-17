@@ -14,10 +14,10 @@ public class ExternalVehicleDto
     public string? Vin { get; set; }
 
     [JsonPropertyName("tag")]
-    public string? Tag { get; set; }
+    public string Tag { get; set; }
 
     [JsonPropertyName("state")]
-    public string? State { get; set; }
+    public string State { get; set; }
 
     [JsonPropertyName("ownerId")]
     public string? OwnerId { get; set; }
