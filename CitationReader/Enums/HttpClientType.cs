@@ -4,6 +4,7 @@ namespace CitationReader.Enums
     {
         Auth,
         HuurApi,
-        CitationReader
+        HttpCitationReader,
+        ParseCitationReader
     }
 }

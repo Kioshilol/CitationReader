@@ -22,8 +22,19 @@ public static class ServiceCollectionExtension
 
         services.AddHttpClient(HttpClientType.Auth.ToString());
         services.AddHttpClient(HttpClientType.HuurApi.ToString());
+        services.AddHttpClient(HttpClientType.ParseCitationReader.ToString())
+            .ConfigurePrimaryHttpMessageHandler(() =>
+            {
+                var cookieJar = new CookieContainer();
+                return new HttpClientHandler
+                {
+                    UseCookies = true,
+                    CookieContainer = cookieJar,
+                    AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip
+                };
+            });
         services
-            .AddHttpClient(HttpClientType.CitationReader.ToString())
+            .AddHttpClient(HttpClientType.HttpCitationReader.ToString())
             .ConfigureHttpClient((_, httpClient) =>
             {
                 httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(

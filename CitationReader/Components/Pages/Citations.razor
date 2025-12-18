@@ -2,6 +2,7 @@
 @using CitationReader.Models.Citation.Internal
 @using CitationReader.Services.Citation
 @using CitationReader.Models.Huur
+@using CitationReader.Readers
 @inject ICitationService CitationService
 @inject ILogger<Citations> Logger
 
@@ -182,11 +183,13 @@
         try
         {
             Logger.LogInformation("Loading citations from all providers");
-            
-            var result = await CitationService.ReadAllCitations();
-            citations = result.ToList();
-            filteredCitations = citations;
-            displayCount = 12; // Reset display count
+
+            var qwe = new VanguardCitationReader();
+            await qwe.ReadCitationsWithResponseAsync("DJ40PP", "FL");
+            // var result = await CitationService.ReadAllCitations();
+            // citations = result?.ToList() ?? new List<CitationModel>();
+            // filteredCitations = citations;
+            // displayCount = 12; // Reset display count
             
             Logger.LogInformation("Loaded {Count} citations", citations.Count);
         }

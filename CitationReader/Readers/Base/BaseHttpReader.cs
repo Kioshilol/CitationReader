@@ -26,20 +26,31 @@ public abstract class BaseHttpReader
     protected async Task<BaseResponse<T>> RequestAsync<T>(
         HttpMethod method,
         string url,
-        object? requestBody = null) where T : class
+        object? requestBody = null,
+        Func<BaseResponse<T>, bool>? skipRetryPredicate = null) where T : class
     {
         for (var attempt = 0; attempt < MaxRetries; attempt++)
         {
             var delay = RetryDelayMs * (int)Math.Pow(2, attempt);
             try
             {
-                var result = await ExecuteRequestAsync<T>(
+                var result = await InternalExecuteRequestAsync<T>(
                     method,
                     url, 
                     requestBody);
                 if (result.IsSuccess)
                 {
                     return result;
+                }
+
+                if (skipRetryPredicate?.Invoke(result) == true)
+                {
+                    Logger.LogInformation(
+                        "Skipping retries for response with reason {Reason} due to skip predicate and return success",
+                        result.Reason);
+                    var response = BaseResponse<T>.Success(result.Result, result.Message);
+                    response.Reason = result.Reason;
+                    return response;
                 }
 
                 if (attempt >= MaxRetries - 1)
@@ -77,10 +88,10 @@ public abstract class BaseHttpReader
             }
         }
 
-        return await ExecuteRequestAsync<T>(method, url, requestBody);
+        return await InternalExecuteRequestAsync<T>(method, url, requestBody);
     }
 
-    private async Task<BaseResponse<T>> ExecuteRequestAsync<T>(
+    private async Task<BaseResponse<T>> InternalExecuteRequestAsync<T>(
         HttpMethod method,
         string url,
         object? requestBody = null) where T : class

@@ -2,5 +2,7 @@
 
 public enum CitationProviderType
 {
-    Vanguard
+    Vanguard,
+    ProfessionalParkingManagement,
+    Metropolis
 }
