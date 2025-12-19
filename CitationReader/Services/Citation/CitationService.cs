@@ -3,6 +3,8 @@ using CitationReader.Enums;
 using CitationReader.Models.Huur;
 using CitationReader.Readers.Interfaces;
 using CitationReader.Services.Huur.Auth;
+using CitationReader.Services.Huur.Violations;
+using CitationReader.Mappers;
 using System.Collections.Concurrent;
 using CitationReader.Models.Citation.Internal;
 
@@ -13,17 +15,23 @@ public class CitationService : ICitationService
     private readonly ILogger<CitationService> _logger;
     private readonly IVehicleService _vehicleService;
     private readonly IAuthService _authService;
+    private readonly IViolationService _violationService;
+    private readonly ICitationMapper _citationMapper;
     private readonly Dictionary<CitationProviderType, ICitationReader> _readers;
 
     public CitationService(
         IEnumerable<ICitationReader> readers,
         IVehicleService vehicleService,
         IAuthService authService,
+        IViolationService violationService,
+        ICitationMapper citationMapper,
         ILogger<CitationService> logger)
     {
         _logger = logger;
         _vehicleService = vehicleService;
         _authService = authService;
+        _violationService = violationService;
+        _citationMapper = citationMapper;
         _readers = readers.ToDictionary(r => r.SupportedProviderType, r => r);
     }
 
@@ -146,6 +154,9 @@ public class CitationService : ICitationService
                     providerCitations.Key);
             }
             
+            // Send citations to server
+            await SendCitationsToServerAsync(citationsList, vehicles);
+            
             return citationsList;
         }
         catch (Exception ex)
@@ -223,4 +234,85 @@ public class CitationService : ICitationService
             semaphore.Release();
         }
     }
+    
+    private async Task SendCitationsToServerAsync(List<CitationModel> citations, ExternalVehicleDto[] vehicles)
+    {
+        if (!citations.Any())
+        {
+            _logger.LogInformation("No citations to send to server");
+            return;
+        }
+        
+        _logger.LogInformation("Starting to send {CitationCount} citations to server", citations.Count);
+        
+        // Create a lookup dictionary for vehicles by tag and state for efficient matching
+        var vehicleLookup = vehicles.ToDictionary(v => $"{v.Tag}_{v.State}", v => v);
+        
+        var successCount = 0;
+        var failureCount = 0;
+        var sendingTasks = new List<Task>();
+        var semaphore = new SemaphoreSlim(Environment.ProcessorCount); // Limit concurrent server calls
+        
+        foreach (var citation in citations)
+        {
+            var task = SendSingleCitationAsync(citation, vehicleLookup, semaphore, 
+                () => Interlocked.Increment(ref successCount),
+                () => Interlocked.Increment(ref failureCount));
+            sendingTasks.Add(task);
+        }
+        
+        await Task.WhenAll(sendingTasks);
+        
+        _logger.LogInformation(
+            "Completed sending citations to server. Success: {SuccessCount}, Failures: {FailureCount}", 
+            successCount, 
+            failureCount);
+    }
+    
+    private async Task SendSingleCitationAsync(
+        CitationModel citation, 
+        Dictionary<string, ExternalVehicleDto> vehicleLookup,
+        SemaphoreSlim semaphore,
+        Action onSuccess,
+        Action onFailure)
+    {
+        await semaphore.WaitAsync();
+        
+        try
+        {
+            var parkingViolation = _citationMapper.MapToParkingViolation(citation, vehicleLookup);
+            var response = await _violationService.CreateParkingViolationAsync(parkingViolation);
+            if (response.IsSuccess)
+            {
+                _logger.LogDebug(
+                    "Successfully sent citation {CitationNumber} from {Provider} to server", 
+                    citation.CitationNumber, 
+                    citation.CitationProviderType);
+                onSuccess();
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Failed to send citation {CitationNumber} from {Provider} to server. Error: {Error}", 
+                    citation.CitationNumber, 
+                    citation.CitationProviderType,
+                    response.Message);
+                onFailure();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex, 
+                "Exception occurred while sending citation {CitationNumber} from {Provider} to server", 
+                citation.CitationNumber, 
+                citation.CitationProviderType);
+            onFailure();
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
+    
 }

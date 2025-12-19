@@ -1,16 +1,15 @@
 ﻿using System.Net;
 using CitationReader.Configuration;
 using CitationReader.Enums;
-using CitationReader.Extensions;
 using CitationReader.Managers.Huur.Auth;
 using CitationReader.Managers.Huur.Vehicle;
+using CitationReader.Managers.Huur.Violations;
 using CitationReader.Providers.Cache;
 using CitationReader.Services.Citation;
 using CitationReader.Services.Huur.Auth;
 using CitationReader.Services.Huur.Vehicle;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
+using CitationReader.Services.Huur.Violations;
+using CitationReader.Mappers;
 
 namespace CitationReader.Extensions;
 
@@ -67,6 +66,7 @@ public static class ServiceCollectionExtension
             builder.AddDebug();
         });
 
+        RegisterMappers(services);
         RegisterProviders(services);
         RegisterManagers(services);
         RegisterServices(services);
@@ -79,6 +79,7 @@ public static class ServiceCollectionExtension
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IVehicleService, VehicleService>();
         services.AddScoped<ICitationService, CitationService>();
+        services.AddScoped<IViolationService, ViolationService>();
         
         services.AddAllCitationReaders();
     }
@@ -87,10 +88,16 @@ public static class ServiceCollectionExtension
     {
         services.AddScoped<IAuthManager, AuthManager>();
         services.AddScoped<IVehicleManager, VehicleManager>();
+        services.AddScoped<IViolationManager, ViolationManager>();
     }
     
     private static void RegisterProviders(IServiceCollection services)
     {
         services.AddScoped<ITokenCacheProvider, TokenCacheProvider>();
+    }
+    
+    private static void RegisterMappers(IServiceCollection services)
+    {
+        services.AddScoped<ICitationMapper, CitationMapper>();
     }
 }
