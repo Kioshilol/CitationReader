@@ -110,9 +110,9 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                 Amount = decimal.TryParse(item.AmountDue, out var amount) ? amount : 0,
                 Currency = Constants.Currency,
                 PaymentStatus = item.TicketStatus.ToLower() != "Ready" 
-                    ? Constants.FineConstants.PNew
-                    : Constants.FineConstants.PPaid,
-                FineType = Constants.FineConstants.FtParking,
+                    ? (int)PaymentStatus.New
+                    : (int)PaymentStatus.Paid,
+                FineType = (int)FineType.Parking,
                 IsActive = item.TicketStatus.ToLower() != "Ready",
                 Link = Link,
                 CitationProviderType = SupportedProviderType

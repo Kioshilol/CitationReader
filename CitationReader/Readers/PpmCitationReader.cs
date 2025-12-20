@@ -1,5 +1,4 @@
-﻿using CitationReader.Common;
-using CitationReader.Enums;
+﻿using CitationReader.Enums;
 using CitationReader.Models.Citation.Internal;
 using CitationReader.Readers.Base;
 using CitationReader.Readers.Interfaces;
@@ -197,11 +196,11 @@ public class PpmCitationReader : BaseParseReader, ICitationReader
             var locationMatch = Regex.Match(cleanText, locationPattern, RegexOptions.IgnoreCase);
             var location = locationMatch.Success ? locationMatch.Groups[1].Value.Trim() : "";
             
-            var paymentStatus = Constants.FineConstants.PNew;
+            var paymentStatus = PaymentStatus.New;
             if (cleanText.Contains("paid", StringComparison.OrdinalIgnoreCase) ||
                 cleanText.Contains("settled", StringComparison.OrdinalIgnoreCase))
             {
-                paymentStatus = Constants.FineConstants.PPaid;
+                paymentStatus = PaymentStatus.Paid;
             }
             
             var violationPatterns = new[]
@@ -233,9 +232,9 @@ public class PpmCitationReader : BaseParseReader, ICitationReader
                 Tag = licensePlate,
                 State = state,
                 Currency = "USD",
-                PaymentStatus = paymentStatus,
-                FineType = Constants.FineConstants.FtParking,
-                IsActive = paymentStatus != Constants.FineConstants.PPaid,
+                PaymentStatus = (int)paymentStatus,
+                FineType = (int)FineType.Parking,
+                IsActive = paymentStatus != PaymentStatus.Paid,
                 Link = Link,
                 CitationProviderType = SupportedProviderType,
                 Address = location,
@@ -301,8 +300,8 @@ public class PpmCitationReader : BaseParseReader, ICitationReader
                         Tag = licensePlate,
                         State = state,
                         Currency = "USD",
-                        PaymentStatus = Constants.FineConstants.PNew,
-                        FineType = Constants.FineConstants.FtParking,
+                        PaymentStatus = (int)PaymentStatus.New,
+                        FineType = (int)FineType.Parking,
                         IsActive = true,
                         Link = Link,
                         CitationProviderType = SupportedProviderType

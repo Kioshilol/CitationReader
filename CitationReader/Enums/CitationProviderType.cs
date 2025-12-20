@@ -4,5 +4,6 @@ public enum CitationProviderType
 {
     Vanguard,
     ProfessionalParkingManagement,
-    Metropolis
+    Metropolis,
+    CityOfFortLauderdale
 }

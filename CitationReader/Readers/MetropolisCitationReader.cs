@@ -111,8 +111,8 @@ public class MetropolisCitationReader : BaseHttpReader, ICitationReader
                 EndDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.VisitEnd).DateTime,
                 Amount = item.ViolationItemView.TotalAmount,
                 Currency = Constants.Currency,
-                PaymentStatus = Constants.FineConstants.PNew,
-                FineType = Constants.FineConstants.FtParking,
+                PaymentStatus = (int)PaymentStatus.New,
+                FineType = (int)FineType.Parking,
                 IsActive = true,
                 Link = Link
             };

@@ -1,4 +1,3 @@
-using CitationReader.Common;
 using CitationReader.Enums;
 using CitationReader.Models.Base;
 using CitationReader.Models.Citation.Internal;
@@ -51,7 +50,7 @@ public abstract class BaseParseReader
 
             // Step 2: Extract any required tokens and form action URL from the page
             var pageContent = initialResponse.Result;
-            var formData = CreateFormData(licensePlate, state);
+            var formData = CreateFormData(licensePlate);
             
             // Look for various types of tokens
             if (!string.IsNullOrEmpty(pageContent))
@@ -70,9 +69,7 @@ public abstract class BaseParseReader
                 Logger.LogInformation("  {Key} = {Value}", kvp.Key, kvp.Value.Length > 50 ? kvp.Value[..50] + "..." : kvp.Value);
             }
             
-            // Extract form action URL
             var formActionUrl = ExtractFormActionUrl(pageContent, BaseUrl);
-            
             var formContent = new FormUrlEncodedContent(formData);
             
             // Add a small delay to mimic human behavior
@@ -281,7 +278,7 @@ public abstract class BaseParseReader
                 State = state,
                 Currency = "USD",
                 PaymentStatus = DeterminePaymentStatus(cells),
-                FineType = Constants.FineConstants.FtParking,
+                FineType = (int)FineType.Parking,
                 IsActive = DetermineIsActive(cells),
                 Link = Link,
                 CitationProviderType = SupportedProviderType
@@ -324,8 +321,8 @@ public abstract class BaseParseReader
                         Tag = licensePlate,
                         State = state,
                         Currency = "USD",
-                        PaymentStatus = Constants.FineConstants.PNew,
-                        FineType = Constants.FineConstants.FtParking,
+                        PaymentStatus = (int)PaymentStatus.New,
+                        FineType = (int)FineType.Parking,
                         IsActive = true,
                         Link = Link,
                         CitationProviderType = SupportedProviderType
@@ -339,21 +336,21 @@ public abstract class BaseParseReader
     
     protected virtual int DeterminePaymentStatus(string[] cells)
     {
-        // Look for payment status indicators in any cell
         var allText = string.Join(" ", cells).ToLower();
-        
         if (allText.Contains("paid") || allText.Contains("settled"))
-            return Constants.FineConstants.PPaid;
+        {
+            return (int)PaymentStatus.Paid;
+        }
         
-        return Constants.FineConstants.PNew;
+        return (int)PaymentStatus.New;
     }
     
     protected virtual bool DetermineIsActive(string[] cells)
     {
-        // Look for status indicators
         var allText = string.Join(" ", cells).ToLower();
-        
-        return !allText.Contains("paid") && !allText.Contains("settled") && !allText.Contains("closed");
+        return !allText.Contains("paid") && 
+               !allText.Contains("settled") &&
+               !allText.Contains("closed");
     }
 
     private async Task<BaseResponse<string>> SubmitFormAsync(string url, FormUrlEncodedContent formContent)
@@ -505,18 +502,13 @@ public abstract class BaseParseReader
         return DateTime.TryParse(dateText, out var date) ? date : DateTime.MinValue;
     }
     
-    private List<KeyValuePair<string, string>> CreateFormData(string licensePlate, string state)
+    private List<KeyValuePair<string, string>> CreateFormData(string licensePlate)
     {
         return
         [
             new KeyValuePair<string, string>(GetLicensePlateFieldName(), licensePlate),
-            new KeyValuePair<string, string>(GetStateFieldName(), GetFormattedState(state)),
+            new KeyValuePair<string, string>(GetStateFieldName(), "FL_89"),
         ];
-    }
-    
-    private static string GetFormattedState(string state)
-    {
-        return $"{state.ToUpper()}_89";
     }
     
     private string ExtractFormActionUrl(string html, string baseUrl)
