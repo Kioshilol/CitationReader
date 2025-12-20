@@ -8,24 +8,15 @@ namespace CitationReader.Readers.Base;
 
 public abstract class BaseParseReader
 {
-    protected readonly HttpClient _httpClient;
+    private readonly HttpClient _httpClient;
     protected readonly ILogger Logger;
 
     protected BaseParseReader(HttpClientType httpClientType)
     {
+        var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
         Logger = Program.ServiceProvider.GetService<ILogger<BaseParseReader>>()!;
         
-        // Create HttpClient with cookie support directly
-        var handler = new HttpClientHandler()
-        {
-            CookieContainer = new System.Net.CookieContainer(),
-            UseCookies = true
-        };
-        
-        _httpClient = new HttpClient(handler);
-        
-        // Configure HttpClient to handle compression automatically
-        _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient = httpClientFactory.CreateClient(httpClientType.ToString());
     }
 
     public abstract CitationProviderType SupportedProviderType { get; }
@@ -76,7 +67,7 @@ public abstract class BaseParseReader
             Logger.LogInformation("Form data being submitted:");
             foreach (var kvp in formData)
             {
-                Logger.LogInformation("  {Key} = {Value}", kvp.Key, kvp.Value.Length > 50 ? kvp.Value.Substring(0, 50) + "..." : kvp.Value);
+                Logger.LogInformation("  {Key} = {Value}", kvp.Key, kvp.Value.Length > 50 ? kvp.Value[..50] + "..." : kvp.Value);
             }
             
             // Extract form action URL
@@ -195,11 +186,12 @@ public abstract class BaseParseReader
         }
     }
 
-    // Abstract methods for provider-specific configuration
     protected abstract string GetLicensePlateFieldName();
     protected abstract string GetStateFieldName();
     protected abstract string[] GetNoResultsIndicators();
     protected abstract string[] GetCitationNumberPatterns();
+    protected abstract List<CitationModel> ParseProviderSpecificFormat(string html, string licensePlate, string state);
+    protected abstract string GetTokenFieldName();
     
     protected virtual List<CitationModel> ParseCitationsFromHtml(string? html, string licensePlate, string state)
     {
@@ -219,16 +211,16 @@ public abstract class BaseParseReader
                 return citations;
             }
             
-            // First try to parse the new card-based format (paymyviolations.com style)
-            var cardCitations = ParseCardBasedCitations(html, licensePlate, state);
-            if (cardCitations.Any())
+            // Try provider-specific parsing first
+            var providerCitations = ParseProviderSpecificFormat(html, licensePlate, state);
+            if (providerCitations.Any())
             {
-                citations.AddRange(cardCitations);
-                Logger.LogInformation("Successfully parsed {Count} citations using card-based format", cardCitations.Count);
+                citations.AddRange(providerCitations);
+                Logger.LogInformation("Successfully parsed {Count} citations using provider-specific format", providerCitations.Count);
                 return citations;
             }
             
-            // Fallback to table-based parsing for other formats
+            // Fallback to table-based parsing for generic formats
             var citationPattern = @"<tr[^>]*>.*?</tr>";
             var matches = Regex.Matches(html, citationPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
             
@@ -257,265 +249,6 @@ public abstract class BaseParseReader
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error parsing citations from HTML");
-        }
-        
-        return citations;
-    }
-    
-    protected virtual List<CitationModel> ParseCardBasedCitations(string html, string licensePlate, string state)
-    {
-        var citations = new List<CitationModel>();
-        
-        try
-        {
-            Logger.LogDebug("Attempting to parse card-based citation format");
-            
-            // Look for citation blocks that contain notice numbers and payment information
-            // Pattern for paymyviolations.com style citations
-            var citationBlockPattern = @"<div[^>]*>[\s\S]*?(?:NOTICE\s+NUMBER|Notice\s+Number)[\s\S]*?</div>";
-            var citationBlocks = Regex.Matches(html, citationBlockPattern, RegexOptions.IgnoreCase | RegexOptions.Multiline);
-            
-            if (citationBlocks.Count == 0)
-            {
-                // Try alternative pattern - look for sections with notice numbers
-                var alternativePattern = @"(?:<tr[^>]*>|<div[^>]*>)[\s\S]*?(\d{3}-\d{3}-\d{3})[\s\S]*?(?:</tr>|</div>)";
-                citationBlocks = Regex.Matches(html, alternativePattern, RegexOptions.IgnoreCase | RegexOptions.Multiline);
-            }
-            
-            if (citationBlocks.Count == 0)
-            {
-                // Try even broader pattern - look for any section containing citation-like numbers
-                var broadPattern = @"(?:<tr[^>]*>|<div[^>]*>|<td[^>]*>)[\s\S]*?(\d{3}[-\s]\d{3}[-\s]\d{3})[\s\S]*?(?:</tr>|</div>|</td>)";
-                citationBlocks = Regex.Matches(html, broadPattern, RegexOptions.IgnoreCase | RegexOptions.Multiline);
-            }
-            
-            Logger.LogDebug("Found {Count} potential citation blocks", citationBlocks.Count);
-            
-            foreach (Match block in citationBlocks)
-            {
-                var blockHtml = block.Value;
-                var citation = ExtractCitationFromCardBlock(blockHtml, licensePlate, state);
-                if (citation != null)
-                {
-                    citations.Add(citation);
-                    Logger.LogDebug("Successfully extracted citation: {NoticeNumber}", citation.NoticeNumber);
-                }
-            }
-            
-            // If no structured blocks found, try to extract individual citation data from the entire HTML
-            if (!citations.Any())
-            {
-                citations.AddRange(ExtractCitationsFromFullHtml(html, licensePlate, state));
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error parsing card-based citations");
-        }
-        
-        return citations;
-    }
-    
-    protected virtual CitationModel? ExtractCitationFromCardBlock(string blockHtml, string licensePlate, string state)
-    {
-        try
-        {
-            var cleanText = CleanHtmlText(blockHtml);
-            
-            // Extract notice number - various patterns
-            var noticeNumberPatterns = new[]
-            {
-                @"(\d{3}-\d{3}-\d{3})",           // 274-380-862
-                @"(\d{3}\s+\d{3}\s+\d{3})",       // 274 380 862
-                @"(\d{9})",                       // 274380862
-                @"Notice\s+Number[:\s]*(\d+[-\s]*\d+[-\s]*\d+)", // Notice Number: 274-380-862
-                @"NOTICE\s+NUMBER[:\s]*(\d+[-\s]*\d+[-\s]*\d+)"  // NOTICE NUMBER: 274-380-862
-            };
-            
-            string? noticeNumber = null;
-            foreach (var pattern in noticeNumberPatterns)
-            {
-                var match = Regex.Match(cleanText, pattern, RegexOptions.IgnoreCase);
-                if (match.Success)
-                {
-                    noticeNumber = match.Groups[1].Value.Replace(" ", "-");
-                    break;
-                }
-            }
-            
-            if (string.IsNullOrEmpty(noticeNumber))
-            {
-                Logger.LogDebug("No notice number found in block");
-                return null;
-            }
-            
-            // Extract amount information
-            var amountPatterns = new[]
-            {
-                @"\$(\d+\.?\d*)",                 // $94.99
-                @"Total[:\s]*\$?(\d+\.?\d*)",     // Total: $94.99
-                @"Amount[:\s]*\$?(\d+\.?\d*)",    // Amount: $94.99
-                @"(\d+\.?\d*)\s*USD"              // 94.99 USD
-            };
-            
-            decimal amount = 0;
-            foreach (var pattern in amountPatterns)
-            {
-                var matches = Regex.Matches(cleanText, pattern, RegexOptions.IgnoreCase);
-                foreach (Match match in matches)
-                {
-                    if (decimal.TryParse(match.Groups[1].Value, out var parsedAmount))
-                    {
-                        // Take the highest amount found (usually the total)
-                        if (parsedAmount > amount)
-                        {
-                            amount = parsedAmount;
-                        }
-                    }
-                }
-            }
-            
-            // Extract date information
-            var datePatterns = new[]
-            {
-                @"(\d{1,2}/\d{1,2}/\d{4})",       // 08/22/2025
-                @"(\d{4}-\d{1,2}-\d{1,2})",       // 2025-08-22
-                @"(\w+\s+\d{1,2},?\s+\d{4})"      // August 22, 2025
-            };
-            
-            DateTime issueDate = DateTime.MinValue;
-            foreach (var pattern in datePatterns)
-            {
-                var match = Regex.Match(cleanText, pattern, RegexOptions.IgnoreCase);
-                if (match.Success && DateTime.TryParse(match.Groups[1].Value, out var parsedDate))
-                {
-                    issueDate = parsedDate;
-                    break;
-                }
-            }
-            
-            // Extract location information
-            var locationPattern = @"(\d+\s+[A-Z\s]+(?:AVE|ST|RD|BLVD|DR|LN|CT|PL|WAY)[^,]*(?:,\s*[A-Z]{2}\s+\d{5})?)";;
-            var locationMatch = Regex.Match(cleanText, locationPattern, RegexOptions.IgnoreCase);
-            var location = locationMatch.Success ? locationMatch.Groups[1].Value.Trim() : "";
-            
-            // Determine payment status
-            var paymentStatus = Constants.FineConstants.PNew;
-            if (cleanText.Contains("paid", StringComparison.OrdinalIgnoreCase) ||
-                cleanText.Contains("settled", StringComparison.OrdinalIgnoreCase))
-            {
-                paymentStatus = Constants.FineConstants.PPaid;
-            }
-            
-            // Extract violation type/description
-            var violationPatterns = new[]
-            {
-                @"Failure to Register or Pay in Advance",
-                @"Non Payment",
-                @"Expired Meter",
-                @"No Permit",
-                @"Overtime Parking"
-            };
-            
-            var violationType = "";
-            foreach (var pattern in violationPatterns)
-            {
-                if (cleanText.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-                {
-                    violationType = pattern;
-                    break;
-                }
-            }
-            
-            var citation = new CitationModel
-            {
-                NoticeNumber = noticeNumber,
-                CitationNumber = noticeNumber, // Use notice number as citation number if no separate citation number
-                IssueDate = issueDate,
-                Amount = amount,
-                Agency = ProviderName,
-                Tag = licensePlate,
-                State = state,
-                Currency = "USD",
-                PaymentStatus = paymentStatus,
-                FineType = Constants.FineConstants.FtParking,
-                IsActive = paymentStatus != Constants.FineConstants.PPaid,
-                Link = Link,
-                CitationProviderType = SupportedProviderType,
-                Address = location,
-                Note = violationType
-            };
-            
-            Logger.LogDebug("Extracted citation from card block: {NoticeNumber}, Amount: {Amount}, Date: {Date}", 
-                citation.NoticeNumber, citation.Amount, citation.IssueDate);
-            
-            return citation;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogDebug(ex, "Error extracting citation from card block");
-            return null;
-        }
-    }
-    
-    protected virtual List<CitationModel> ExtractCitationsFromFullHtml(string html, string licensePlate, string state)
-    {
-        var citations = new List<CitationModel>();
-        
-        try
-        {
-            Logger.LogDebug("Attempting to extract citations from full HTML");
-            
-            // Look for all notice numbers in the HTML
-            var noticeNumberPattern = @"(\d{3}[-\s]\d{3}[-\s]\d{3})";
-            var noticeMatches = Regex.Matches(html, noticeNumberPattern);
-            
-            var foundNoticeNumbers = new HashSet<string>();
-            
-            foreach (Match match in noticeMatches)
-            {
-                var noticeNumber = match.Groups[1].Value.Replace(" ", "-");
-                
-                if (foundNoticeNumbers.Contains(noticeNumber))
-                    continue;
-                
-                foundNoticeNumbers.Add(noticeNumber);
-                
-                // Try to find associated amount and date near this notice number
-                var contextStart = Math.Max(0, match.Index - 500);
-                var contextEnd = Math.Min(html.Length, match.Index + 500);
-                var context = html.Substring(contextStart, contextEnd - contextStart);
-                
-                var citation = ExtractCitationFromCardBlock(context, licensePlate, state);
-                if (citation != null)
-                {
-                    citations.Add(citation);
-                }
-                else
-                {
-                    // Create minimal citation with just the notice number
-                    citations.Add(new CitationModel
-                    {
-                        NoticeNumber = noticeNumber,
-                        CitationNumber = noticeNumber,
-                        Agency = ProviderName,
-                        Tag = licensePlate,
-                        State = state,
-                        Currency = "USD",
-                        PaymentStatus = Constants.FineConstants.PNew,
-                        FineType = Constants.FineConstants.FtParking,
-                        IsActive = true,
-                        Link = Link,
-                        CitationProviderType = SupportedProviderType
-                    });
-                }
-            }
-            
-            Logger.LogDebug("Extracted {Count} citations from full HTML", citations.Count);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error extracting citations from full HTML");
         }
         
         return citations;
@@ -777,30 +510,13 @@ public abstract class BaseParseReader
         return
         [
             new KeyValuePair<string, string>(GetLicensePlateFieldName(), licensePlate),
-            new KeyValuePair<string, string>(GetStateFieldName(), "FL_89"),
+            new KeyValuePair<string, string>(GetStateFieldName(), GetFormattedState(state)),
         ];
     }
     
-    private static string GetState(string state)
+    private static string GetFormattedState(string state)
     {
-        var stateMapping = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "AL", "Alabama" }, { "AK", "Alaska" }, { "AZ", "Arizona" }, { "AR", "Arkansas" },
-            { "CA", "California" }, { "CO", "Colorado" }, { "CT", "Connecticut" }, { "DE", "Delaware" },
-            { "FL", "Florida" }, { "GA", "Georgia" }, { "HI", "Hawaii" }, { "ID", "Idaho" },
-            { "IL", "Illinois" }, { "IN", "Indiana" }, { "IA", "Iowa" }, { "KS", "Kansas" },
-            { "KY", "Kentucky" }, { "LA", "Louisiana" }, { "ME", "Maine" }, { "MD", "Maryland" },
-            { "MA", "Massachusetts" }, { "MI", "Michigan" }, { "MN", "Minnesota" }, { "MS", "Mississippi" },
-            { "MO", "Missouri" }, { "MT", "Montana" }, { "NE", "Nebraska" }, { "NV", "Nevada" },
-            { "NH", "New Hampshire" }, { "NJ", "New Jersey" }, { "NM", "New Mexico" }, { "NY", "New York" },
-            { "NC", "North Carolina" }, { "ND", "North Dakota" }, { "OH", "Ohio" }, { "OK", "Oklahoma" },
-            { "OR", "Oregon" }, { "PA", "Pennsylvania" }, { "RI", "Rhode Island" }, { "SC", "South Carolina" },
-            { "SD", "South Dakota" }, { "TN", "Tennessee" }, { "TX", "Texas" }, { "UT", "Utah" },
-            { "VT", "Vermont" }, { "VA", "Virginia" }, { "WA", "Washington" }, { "WV", "West Virginia" },
-            { "WI", "Wisconsin" }, { "WY", "Wyoming" }, { "DC", "District of Columbia" }
-        };
-        
-        return stateMapping.GetValueOrDefault(state, state);
+        return $"{state.ToUpper()}_89";
     }
     
     private string ExtractFormActionUrl(string html, string baseUrl)
@@ -952,15 +668,14 @@ public abstract class BaseParseReader
                     var tokenValue = match.Groups[1].Value;
                     if (!string.IsNullOrEmpty(tokenValue))
                     {
-                        formData.Add(new KeyValuePair<string, string>("_token", tokenValue));
+                        formData.Add(new KeyValuePair<string, string>(GetTokenFieldName(), tokenValue));
                         Logger.LogDebug("Found token: {TokenName} = {TokenValue}", tokenName, tokenValue.Substring(0, Math.Min(10, tokenValue.Length)) + "...");
                         tokensFound++;
                     }
                 }
             }
             
-            // Also look for any other hidden input fields that might be required
-            var hiddenInputPattern = @"<input[^>]*type=['""]hidden['""][^>]*name=['""]([^'""]*)['""][^>]*value=['""]([^'""]*)['""]";
+            const string hiddenInputPattern = """<input[^>]*type=['"]hidden['"][^>]*name=['"]([^'"]*)['"][^>]*value=['"]([^'"]*)['"]""";
             var hiddenMatches = Regex.Matches(html, hiddenInputPattern, RegexOptions.IgnoreCase);
             
             foreach (Match match in hiddenMatches)
@@ -970,7 +685,9 @@ public abstract class BaseParseReader
                 
                 // Skip if we already added this field
                 if (formData.Any(kvp => kvp.Key.Equals(fieldName, StringComparison.OrdinalIgnoreCase)))
+                {
                     continue;
+                }
                 
                 // Add common hidden fields that are often required
                 if (fieldName.Contains("token", StringComparison.OrdinalIgnoreCase) ||
@@ -979,7 +696,7 @@ public abstract class BaseParseReader
                     fieldName.Contains("form", StringComparison.OrdinalIgnoreCase) ||
                     fieldName.Contains("nonce", StringComparison.OrdinalIgnoreCase))
                 {
-                    formData.Add(new KeyValuePair<string, string>("_token", fieldValue));
+                    formData.Add(new KeyValuePair<string, string>(GetTokenFieldName(), fieldValue));
                     Logger.LogDebug("Found additional hidden field: {FieldName} = {FieldValue}", fieldName, fieldValue.Substring(0, Math.Min(10, fieldValue.Length)) + "...");
                     tokensFound++;
                 }
@@ -1006,21 +723,18 @@ public abstract class BaseParseReader
         {
             Logger.LogDebug("Extracting redirect location from JSON response");
             
-            // Parse JSON response to extract location
-            // Expected format: {"success":true,"location":"\/parking-charge-notice\/274380862\/FL\/55EKAP"}
-            var locationPattern = @"""location""\s*:\s*""([^""]*)""|'location'\s*:\s*'([^']*)'";
+            const string locationPattern = """
+                                           "location"\s*:\s*"([^"]*)"|'location'\s*:\s*'([^']*)'
+                                           """;
             var match = Regex.Match(jsonResponse, locationPattern, RegexOptions.IgnoreCase);
             
             if (match.Success)
             {
                 var location = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
-                
-                // Unescape JSON escaped characters
                 location = location.Replace("\\/", "/");
                 
                 Logger.LogDebug("Extracted location from JSON: {Location}", location);
                 
-                // Convert to absolute URL if needed
                 if (location.StartsWith("/"))
                 {
                     var baseUri = new Uri(baseUrl);
@@ -1035,7 +749,6 @@ public abstract class BaseParseReader
                     return location;
                 }
                 
-                // Relative path without leading slash
                 var baseUriForRelative = new Uri(baseUrl);
                 var resolvedUrl = new Uri(baseUriForRelative, location).ToString();
                 Logger.LogDebug("Resolved relative location {RelativeLocation} to {ResolvedUrl}", location, resolvedUrl);
@@ -1049,92 +762,6 @@ public abstract class BaseParseReader
         {
             Logger.LogWarning(ex, "Error extracting redirect location from JSON");
             return null;
-        }
-    }
-
-    private async Task<BaseResponse<string>> TryJsonApiSubmission(string url, string licensePlate, string state)
-    {
-        try
-        {
-            Logger.LogInformation("Attempting JSON API submission as fallback");
-            
-            // Try different JSON payload formats
-            var jsonPayloads = new[]
-            {
-                // Format 1: Simple object
-                $"{{\"plate_number\":\"{licensePlate}\",\"plate_state\":\"{GetState(state)}\"}}",
-                $"{{\"licensePlate\":\"{licensePlate}\",\"state\":\"{GetState(state)}\"}}",
-                $"{{\"plate\":\"{licensePlate}\",\"state\":\"{GetState(state)}\"}}",
-                
-                // Format 2: With field names from abstract methods
-                $"{{\"{GetLicensePlateFieldName()}\":\"{licensePlate}\",\"{GetStateFieldName()}\":\"{GetState(state)}\"}}",
-                
-                // Format 3: Nested object
-                $"{{\"search\":{{\"plate_number\":\"{licensePlate}\",\"plate_state\":\"{GetState(state)}\"}}}}"
-            };
-            
-            foreach (var jsonPayload in jsonPayloads)
-            {
-                Logger.LogDebug("Trying JSON payload: {Payload}", jsonPayload);
-                
-                using var request = new HttpRequestMessage(HttpMethod.Post, url);
-                
-                // JSON API headers
-                request.Headers.Clear();
-                request.Headers.Add("User-Agent", 
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-                request.Headers.Add("Accept", "application/json, text/plain, */*");
-                request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
-                request.Headers.Add("Cache-Control", "no-cache");
-                request.Headers.Add("Sec-Fetch-Dest", "empty");
-                request.Headers.Add("Sec-Fetch-Mode", "cors");
-                request.Headers.Add("Sec-Fetch-Site", "same-origin");
-                request.Headers.Add("X-Requested-With", "XMLHttpRequest");
-                
-                var baseUri = new Uri(url);
-                request.Headers.Add("Origin", $"{baseUri.Scheme}://{baseUri.Host}");
-                request.Headers.Add("Referer", url);
-                
-                request.Content = new StringContent(jsonPayload, System.Text.Encoding.UTF8, "application/json");
-                
-                var response = await _httpClient.SendAsync(request);
-                var content = await response.Content.ReadAsStringAsync();
-                
-                Logger.LogDebug("JSON API response status: {StatusCode}", response.StatusCode);
-                Logger.LogDebug("JSON API response content: {Content}", content.Length > 200 ? content.Substring(0, 200) + "..." : content);
-                
-                if (content.Contains("Token not provided", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Different error, might be worth returning
-                    var errorMessage = $"HTTP {(int)response.StatusCode}: JSON API submission failed";
-                    Logger.LogWarning("JSON API submission failed with status {StatusCode}", response.StatusCode);
-                    continue;
-                }
-                
-                if (response.IsSuccessStatusCode)
-                {
-                    Logger.LogInformation("JSON API submission successful");
-                    return BaseResponse<string>.Success(content);
-                }
-                
-                // If this payload didn't work, try the next one
-                if (!content.Contains("Token not provided", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Different error, might be worth returning
-                    var errorMessage = $"HTTP {(int)response.StatusCode}: JSON API submission failed";
-                    Logger.LogWarning("JSON API submission failed with status {StatusCode}", response.StatusCode);
-                    return BaseResponse<string>.Failure((int)response.StatusCode, errorMessage);
-                }
-            }
-            
-            // All JSON attempts failed
-            Logger.LogWarning("All JSON API submission attempts failed");
-            return BaseResponse<string>.Failure(400, "All JSON API submission attempts failed with token errors");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Exception during JSON API submission");
-            return BaseResponse<string>.Failure(-1, $"JSON API submission exception: {ex.Message}");
         }
     }
 }
