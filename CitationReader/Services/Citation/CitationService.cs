@@ -189,7 +189,7 @@ public class CitationService : ICitationService
                 vehicle.State, 
                 citationProviderProvider);
             
-            var response = await reader.ReadCitationsWithResponseAsync(
+            var response = await reader.ReadCitationsAsync(
                 vehicle.Tag,
                 vehicle.State);
             if (response is { IsSuccess: true, Data: not null })

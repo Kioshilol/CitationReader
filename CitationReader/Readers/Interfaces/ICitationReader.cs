@@ -11,7 +11,7 @@ public interface ICitationReader
     
     string Link { get; }
 
-    Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsWithResponseAsync(
+    Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(
         string licensePlate,
         string state);
 }

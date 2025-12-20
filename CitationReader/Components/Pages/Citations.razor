@@ -184,8 +184,8 @@
         {
             Logger.LogInformation("Loading citations from all providers");
 
-            var qwe = new VanguardCitationReader();
-            await qwe.ReadCitationsWithResponseAsync("DJ40PP", "FL");
+            var qwe = new PpmCitationReader();
+            await qwe.ReadCitationsAsync("55EKAP", "FL");
             // var result = await CitationService.ReadAllCitations();
             // citations = result?.ToList() ?? new List<CitationModel>();
             // filteredCitations = citations;

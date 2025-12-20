@@ -21,7 +21,7 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
     public CitationProviderType SupportedProviderType => CitationProviderType.Vanguard;
     public string Link => "https://www.payparkingnotice.com/";
 
-    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsWithResponseAsync(
+    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(
         string licensePlate,
         string state)
     {

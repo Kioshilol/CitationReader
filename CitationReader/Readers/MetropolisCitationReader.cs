@@ -21,7 +21,7 @@ public class MetropolisCitationReader : BaseHttpReader, ICitationReader
     public CitationProviderType SupportedProviderType => CitationProviderType.Metropolis;
     public string Link => "https://payments.metropolis.io/";
 
-    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsWithResponseAsync(
+    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(
         string licensePlate,
         string state)
     {
