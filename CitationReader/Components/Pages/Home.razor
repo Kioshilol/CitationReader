@@ -1,15 +1,246 @@
 ﻿@page "/"
+@rendermode InteractiveServer
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Citation Reader - Live Logs</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="container-fluid citation-reader-container p-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-shrink-0">
+        <h1 class="mb-0">
+            <i class="fas fa-terminal me-2 text-primary"></i>
+            Citation Reader
+        </h1>
+        <div class="d-flex gap-3 align-items-end">
+            <div class="provider-selector">
+                <label class="form-label mb-2 fw-semibold text-muted">
+                    <i class="fas fa-filter me-1"></i>
+                    Citation Provider
+                </label>
+                <select class="form-select provider-dropdown" @bind="_selectedProvider" disabled="@IsRunning">
+                    <option value="">🌐 All Providers</option>
+                    @foreach (var provider in _availableProviders)
+                    {
+                        <option value="@provider">📋 @GetProviderDisplayName(provider)</option>
+                    }
+                </select>
+            </div>
+            <div class="button-group d-flex gap-2">
+                <button class="btn btn-primary citation-lookup-btn" @onclick="OpenCitationLookupModal" title="Look up citation for specific plate">
+                    <i class="fas fa-search me-2"></i>
+                    Citation Lookup
+                </button>
+                <button class="btn btn-outline-secondary" @onclick="ClearLogs" disabled="@IsRunning" title="Clear log entries">
+                    <i class="fas fa-trash me-2"></i>
+                    Clear Logs
+                </button>
+                <button class="btn @(IsRunning ? "btn-danger" : "btn-success") btn-lg main-action-btn" 
+                        @onclick="@(IsRunning ? StopProcess : StartProcess)" 
+                        disabled="@(_isStarting || _isStopping)">
+                    @if (_isStarting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        <span>Starting...</span>
+                    }
+                    else if (_isStopping)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                        <span>Stopping...</span>
+                    }
+                    else if (IsRunning)
+                    {
+                        <i class="fas fa-stop me-2"></i>
+                        <span>Stop Process</span>
+                    }
+                    else
+                    {
+                        <i class="fas fa-play me-2"></i>
+                        <span>Start Citation Reading</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
 
-Welcome to your new app.
+    <!-- Status Bar -->
+    <div class="card mb-3 flex-shrink-0 status-card">
+        <div class="card-body py-3">
+            <div class="row align-items-center">
+                <div class="col-md-2">
+                    <div class="d-flex align-items-center">
+                        <div class="status-indicator @(IsRunning ? "status-running" : "status-idle") me-3"></div>
+                        <div>
+                            <div class="stat-label">Status</div>
+                            <div class="stat-value">@(IsRunning ? "Running" : "Idle")</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="text-center">
+                        <div class="stat-label">Duration</div>
+                        <div class="stat-value">@GetDurationString()</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <div class="stat-label">Vehicles Progress</div>
+                        <div class="stat-value">
+                            @ProcessStateService.ProcessedVehicles / @ProcessStateService.TotalVehicles
+                            @if (ProcessStateService.TotalVehicles > 0)
+                            {
+                                <small class="text-muted">(@(Math.Round((double)ProcessStateService.ProcessedVehicles / ProcessStateService.TotalVehicles * 100, 1))%)</small>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-5">
+                    <div class="text-center">
+                        <div class="stat-label">Violations Found</div>
+                        <div class="stat-value text-success">@ProcessStateService.ViolationCount</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-<div class="navigation-links" style="margin-top: 30px;">
-    <h3>Available Pages:</h3>
-    <ul>
-        <li><a href="/external-vehicles" class="btn btn-primary me-2 mb-2">View External Vehicles</a></li>
-        <li><a href="/citations" class="btn btn-success me-2 mb-2">View Citations</a></li>
-    </ul>
+    <!-- Log Container -->
+    <div class="card flex-grow-1 d-flex flex-column min-h-0">
+        <div class="card-header d-flex justify-content-between align-items-center flex-shrink-0">
+            <h5 class="mb-0">
+                <i class="fas fa-list-ul me-2"></i>
+                Live Logs
+            </h5>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="autoScroll" @bind="_autoScroll">
+                <label class="form-check-label" for="autoScroll">
+                    Auto-scroll
+                </label>
+            </div>
+        </div>
+        <div class="card-body p-0 flex-grow-1 d-flex flex-column min-h-0">
+            <div class="log-container flex-grow-1 overflow-auto" id="logContainer">
+                @{
+                    var displayEntries = GetLogEntriesForDisplay();
+                }
+                @if (!displayEntries.Any())
+                {
+                    <div class="empty-state">
+                        <i class="fas fa-rocket fa-3x mb-3"></i>
+                        <h4 class="mb-3">Ready to Start</h4>
+                        <p class="mb-0">Click "Start Citation Reading" to begin monitoring all application logs in real-time.</p>
+                        @if (Environment.IsDevelopment())
+                        {
+                            <small class="text-muted d-block mt-2">
+                                <i class="fas fa-code me-1"></i>
+                                Development mode: Global log capture enabled
+                            </small>
+                        }
+                    </div>
+                }
+                else
+                {
+                    @foreach (var entry in displayEntries)
+                    {
+                        <div class="log-entry @GetLogLevelClass(entry.Level)">
+                            <div class="log-timestamp">@entry.Timestamp.ToString("HH:mm:ss.fff")</div>
+                            <div class="log-level">@entry.Level.ToString().ToUpper()</div>
+                            <div class="log-message">@entry.Message</div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
 </div>
+
+<!-- Citation Lookup Modal -->
+@if (_showCitationLookupModal)
+{
+    <div class="modal-backdrop show" @onclick="CloseCitationLookupModal"></div>
+    <div class="modal show d-block" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered citation-lookup-modal" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-search me-2 text-primary"></i>
+                        Citation Lookup
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CloseCitationLookupModal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form @onsubmit="PerformCitationLookup" @onsubmit:preventDefault="true">
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold">
+                                <i class="fas fa-building me-1"></i>
+                                Citation Provider
+                            </label>
+                            <select class="form-select provider-select" @bind="_lookupProvider" required>
+                                <option value="">Select a provider...</option>
+                                @foreach (var provider in _availableProviders)
+                                {
+                                    <option value="@provider">@GetProviderDisplayName(provider)</option>
+                                }
+                            </select>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="form-label fw-semibold">
+                                <i class="fas fa-car me-1"></i>
+                                License Plate Number
+                            </label>
+                            <input type="text" 
+                                   class="form-control plate-input" 
+                                   @bind="_lookupPlateNumber" 
+                                   placeholder="Enter plate number (e.g., ABC123)" 
+                                   required 
+                                   maxlength="10"
+                                   @oninput="FormatPlateNumber" />
+                            <div class="form-text">
+                                <i class="fas fa-info-circle me-1"></i>
+                                Enter the license plate number without spaces or special characters
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-end gap-2">
+                            <button type="button" class="btn btn-outline-secondary" @onclick="CloseCitationLookupModal">
+                                <i class="fas fa-times me-2"></i>
+                                Cancel
+                            </button>
+                            <button type="submit" 
+                                    class="btn btn-primary lookup-submit-btn" 
+                                    disabled="@(_isLookingUp || string.IsNullOrWhiteSpace(_lookupPlateNumber) || !_lookupProvider.HasValue)">
+                                @if (_isLookingUp)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                    <span>Searching...</span>
+                                }
+                                else
+                                {
+                                    <i class="fas fa-search me-2"></i>
+                                    <span>Search Citations</span>
+                                }
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<script>
+    window.scrollToBottom = (elementId) => {
+        const element = document.getElementById(elementId);
+        if (element) {
+            // Force a smooth scroll to bottom
+            element.scrollTo({
+                top: element.scrollHeight,
+                behavior: 'smooth'
+            });
+            
+            // Fallback for browsers that don't support smooth scrolling
+            setTimeout(() => {
+                element.scrollTop = element.scrollHeight;
+            }, 50);
+        }
+    };
+</script>

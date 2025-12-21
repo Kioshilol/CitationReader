@@ -1,4 +1,5 @@
 ﻿using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Models.Citation.Internal;
 using CitationReader.Readers.Base;
 using CitationReader.Readers.Interfaces;
@@ -7,11 +8,12 @@ namespace CitationReader.Readers;
 
 public class CoflCitationReader : BaseHostedPortalParseReader, ICitationReader
 {
-    private const string Name = "City of Fort Lauderdale";
     private const string Url = "https://fortlauderdaleparking.t2hosted.com";
 
     public CoflCitationReader() 
-        : base(Url, Name)
+        : base(
+            Url, 
+            CitationProviderType.CityOfFortLauderdale.GetDisplayName())
     {
     }
     

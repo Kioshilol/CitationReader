@@ -28,7 +28,7 @@ public class BaseHostedPortalParseReader : IDisposable
     private const int RetryDelayMs = 1500;
     private const int RequestTimeoutMs = 30000;
 
-    private readonly HttpClient _client;
+    private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
     private readonly string _portalUrl;
     private readonly string _searchUrl;
@@ -48,50 +48,15 @@ public class BaseHostedPortalParseReader : IDisposable
         {
             throw new ArgumentException("Agency cannot be null or empty", nameof(agency));
         }
+        
+        Logger = Program.ServiceProvider.GetService<ILogger<BaseHostedPortalParseReader>>()!;
+        var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
+        _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseHostedCitationReader.ToString());
 
         _baseUrl = baseUrl.TrimEnd('/');
         _portalUrl = $"{_baseUrl}/Account/Portal";
         _searchUrl = $"{_baseUrl}/Account/Citations/Search";
         _agency = agency;
-
-        Logger = Program.ServiceProvider.GetService<ILogger<BaseHostedPortalParseReader>>()!;
-        _client = CreateHttpClient();
-    }
-
-    private HttpClient CreateHttpClient()
-    {
-        var cookieJar = new CookieContainer();
-        var handler = new HttpClientHandler
-        {
-            UseCookies = true,
-            CookieContainer = cookieJar,
-            AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip
-        };
-
-        var client = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromMilliseconds(RequestTimeoutMs)
-        };
-
-        // Enhanced headers to better mimic a real browser
-        client.DefaultRequestHeaders.Clear();
-        client.DefaultRequestHeaders.Add("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        client.DefaultRequestHeaders.Add("Accept",
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
-        client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-        client.DefaultRequestHeaders.Add("Cache-Control", "no-cache");
-        client.DefaultRequestHeaders.Add("Pragma", "no-cache");
-        client.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
-        client.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
-        client.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
-        client.DefaultRequestHeaders.Add("Sec-Fetch-Site", "none");
-        client.DefaultRequestHeaders.Add("Sec-Fetch-User", "?1");
-        client.DefaultRequestHeaders.Add("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"");
-        client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Mobile", "?0");
-        client.DefaultRequestHeaders.Add("Sec-Ch-Ua-Platform", "\"Windows\"");
-
-        return client;
     }
 
     protected async Task<BaseResponse<List<ParkingViolation>>> SearchCitationAsync(string plateNumber, string stateCode)
@@ -181,7 +146,6 @@ public class BaseHostedPortalParseReader : IDisposable
     private static bool TryGetStateId(string stateCode, out string stateId)
     {
         stateId = string.Empty;
-
         return !string.IsNullOrWhiteSpace(stateCode) && StateToIdMap.TryGetValue(stateCode.ToUpper(), out stateId);
     }
 
@@ -193,7 +157,7 @@ public class BaseHostedPortalParseReader : IDisposable
             {
                 Logger.LogDebug("Making GET request to {Url} (attempt {Attempt}/{MaxRetries})", url, attempt + 1, MaxRetries);
                 
-                var response = await _client.GetAsync(url);
+                var response = await _httpClient.GetAsync(url);
                 var content = await response.Content.ReadAsStringAsync();
 
                 if (response.IsSuccessStatusCode)
@@ -214,14 +178,21 @@ public class BaseHostedPortalParseReader : IDisposable
             }
             catch (HttpRequestException ex) when (attempt < MaxRetries - 1)
             {
-                Logger.LogWarning(ex, "HTTP request failed on attempt {Attempt}/{MaxRetries} for {Url}, retrying...", 
-                    attempt + 1, MaxRetries, url);
+                Logger.LogWarning(
+                    ex, 
+                    "HTTP request failed on attempt {Attempt}/{MaxRetries} for {Url}, retrying...", 
+                    attempt + 1,
+                    MaxRetries, url);
                 await Task.Delay(RetryDelayMs * (attempt + 1));
             }
             catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException && attempt < MaxRetries - 1)
             {
-                Logger.LogWarning(ex, "Request timeout on attempt {Attempt}/{MaxRetries} for {Url}, retrying...", 
-                    attempt + 1, MaxRetries, url);
+                Logger.LogWarning(
+                    ex, 
+                    "Request timeout on attempt {Attempt}/{MaxRetries} for {Url}, retrying...", 
+                    attempt + 1, 
+                    MaxRetries,
+                    url);
                 await Task.Delay(RetryDelayMs * (attempt + 1));
             }
         }
@@ -229,14 +200,21 @@ public class BaseHostedPortalParseReader : IDisposable
         return BaseResponse<string>.Failure(-1, "All retry attempts failed");
     }
 
-    private async Task<BaseResponse<string>> SubmitSearchWithRetryAsync(string plateNumber, string stateId, string? token, string carDetails)
+    private async Task<BaseResponse<string>> SubmitSearchWithRetryAsync(
+        string plateNumber,
+        string stateId, 
+        string? token, 
+        string carDetails)
     {
         for (var attempt = 0; attempt < MaxRetries; attempt++)
         {
             try
             {
-                Logger.LogDebug("Submitting search form for {CarDetails} (attempt {Attempt}/{MaxRetries})", 
-                    carDetails, attempt + 1, MaxRetries);
+                Logger.LogDebug(
+                    "Submitting search form for {CarDetails} (attempt {Attempt}/{MaxRetries})", 
+                    carDetails,
+                    attempt + 1, 
+                    MaxRetries);
 
                 var formData = CreateFormData(plateNumber, stateId, token);
                 var content = new FormUrlEncodedContent(formData);
@@ -250,7 +228,7 @@ public class BaseHostedPortalParseReader : IDisposable
                     await Task.Delay(RetryDelayMs * attempt);
                 }
 
-                var response = await _client.PostAsync(_searchUrl, content);
+                var response = await _httpClient.PostAsync(_searchUrl, content);
                 var result = await response.Content.ReadAsStringAsync();
 
                 Logger.LogDebug("Search form submission response status: {StatusCode}", response.StatusCode);
@@ -272,13 +250,21 @@ public class BaseHostedPortalParseReader : IDisposable
             }
             catch (HttpRequestException ex) when (attempt < MaxRetries - 1)
             {
-                Logger.LogWarning(ex, "Form submission failed on attempt {Attempt}/{MaxRetries} for {CarDetails}, retrying...", 
-                    attempt + 1, MaxRetries, carDetails);
+                Logger.LogWarning(
+                    ex, 
+                    "Form submission failed on attempt {Attempt}/{MaxRetries} for {CarDetails}, retrying...", 
+                    attempt + 1,
+                    MaxRetries,
+                    carDetails);
             }
             catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException && attempt < MaxRetries - 1)
             {
-                Logger.LogWarning(ex, "Form submission timeout on attempt {Attempt}/{MaxRetries} for {CarDetails}, retrying...", 
-                    attempt + 1, MaxRetries, carDetails);
+                Logger.LogWarning(
+                    ex, 
+                    "Form submission timeout on attempt {Attempt}/{MaxRetries} for {CarDetails}, retrying...", 
+                    attempt + 1,
+                    MaxRetries, 
+                    carDetails);
             }
         }
 
@@ -287,13 +273,13 @@ public class BaseHostedPortalParseReader : IDisposable
 
     private void SetFormSubmissionHeaders()
     {
-        _client.DefaultRequestHeaders.Remove("X-Requested-With");
-        _client.DefaultRequestHeaders.Remove("Referer");
-        _client.DefaultRequestHeaders.Remove("Origin");
+        _httpClient.DefaultRequestHeaders.Remove("X-Requested-With");
+        _httpClient.DefaultRequestHeaders.Remove("Referer");
+        _httpClient.DefaultRequestHeaders.Remove("Origin");
 
-        _client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-        _client.DefaultRequestHeaders.Add("Referer", _portalUrl);
-        _client.DefaultRequestHeaders.Add("Origin", _baseUrl);
+        _httpClient.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        _httpClient.DefaultRequestHeaders.Add("Referer", _portalUrl);
+        _httpClient.DefaultRequestHeaders.Add("Origin", _baseUrl);
     }
 
     private static Dictionary<string, string> CreateFormData(string plateNumber, string stateId, string? token)
@@ -527,7 +513,7 @@ public class BaseHostedPortalParseReader : IDisposable
     {
         if (!_disposed && disposing)
         {
-            _client?.Dispose();
+            _httpClient?.Dispose();
             _disposed = true;
         }
     }

@@ -3,6 +3,7 @@ using CitationReader.Models.Citation.Internal;
 using CitationReader.Readers.Base;
 using CitationReader.Readers.Interfaces;
 using System.Text.RegularExpressions;
+using CitationReader.Extensions;
 
 namespace CitationReader.Readers;
 
@@ -16,7 +17,7 @@ public class PpmCitationReader : BaseParseReader, ICitationReader
     public override CitationProviderType SupportedProviderType => CitationProviderType.ProfessionalParkingManagement;
     public override string Link => "https://paymyviolations.com";
     protected override string BaseUrl => "https://paymyviolations.com/";
-    protected override string ProviderName => "Professional Parking Management";
+    protected override string ProviderName => CitationProviderType.ProfessionalParkingManagement.GetDisplayName();
     protected override string GetLicensePlateFieldName() => "plate_number";
     protected override string GetStateFieldName() => "plate_state";
 

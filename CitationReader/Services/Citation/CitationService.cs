@@ -7,6 +7,7 @@ using CitationReader.Services.Huur.Violations;
 using CitationReader.Mappers;
 using System.Collections.Concurrent;
 using CitationReader.Models.Citation.Internal;
+using CitationReader.Services;
 
 namespace CitationReader.Services.Citation;
 
@@ -17,6 +18,7 @@ public class CitationService : ICitationService
     private readonly IAuthService _authService;
     private readonly IViolationService _violationService;
     private readonly ICitationMapper _citationMapper;
+    private readonly IProcessStateService _processStateService;
     private readonly Dictionary<CitationProviderType, ICitationReader> _readers;
 
     public CitationService(
@@ -25,6 +27,7 @@ public class CitationService : ICitationService
         IAuthService authService,
         IViolationService violationService,
         ICitationMapper citationMapper,
+        IProcessStateService processStateService,
         ILogger<CitationService> logger)
     {
         _logger = logger;
@@ -32,19 +35,68 @@ public class CitationService : ICitationService
         _authService = authService;
         _violationService = violationService;
         _citationMapper = citationMapper;
+        _processStateService = processStateService;
         _readers = readers.ToDictionary(r => r.SupportedProviderType, r => r);
     }
 
-    public async Task<IEnumerable<CitationModel>> ReadAllCitations()
+    public Task<IEnumerable<CitationModel>> ReadAllCitationsAsync(CancellationToken cancellationToken = default)
+    {
+        var allProviders = Enum.GetValues<CitationProviderType>().Where(p => _readers.ContainsKey(p));
+        return ReadCitationsFromProvidersAsync(allProviders, cancellationToken);
+    }
+
+    public async Task<IEnumerable<CitationModel>> ReadCitationsByProviderAndPlateNumberAsync(CitationProviderType provider, string licensePlate, string state = "NY", CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Starting citation lookup for plate '{LicensePlate}' in state '{State}' using provider '{Provider}'", licensePlate, state, provider);
+        
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            if (!_readers.TryGetValue(provider, out var reader))
+            {
+                _logger.LogWarning("No reader found for provider {Provider}", provider);
+                return Enumerable.Empty<CitationModel>();
+            }
+            
+            _logger.LogDebug("Processing plate {LicensePlate} ({State}) with provider {Provider}", licensePlate, state, provider);
+            
+            var response = await reader.ReadCitationsAsync(licensePlate, state);
+            
+            if (response is { IsSuccess: true, Data: not null })
+            {
+                var citations = response.Data.ToList();
+                _logger.LogInformation("Found {Count} citations for plate {LicensePlate} from {Provider}", citations.Count, licensePlate, provider);
+                return citations;
+            }
+            
+            if (response.Error != null)
+            {
+                _logger.LogWarning("Error reading citations for plate {LicensePlate} from {Provider}: {Error}", licensePlate, provider, response.Error.Message);
+            }
+            
+            return Enumerable.Empty<CitationModel>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception reading citations for plate {LicensePlate} from provider {Provider}", licensePlate, provider);
+            return Enumerable.Empty<CitationModel>();
+        }
+    }
+
+    public async Task<IEnumerable<CitationModel>> ReadCitationsFromProvidersAsync(IEnumerable<CitationProviderType> providers, CancellationToken cancellationToken = default)
     {
         var startTime = DateTime.UtcNow;
-        _logger.LogInformation("Starting to read citations for all external vehicles");
+        var selectedProviders = providers.ToList();
+        _logger.LogInformation("Starting to read citations for selected providers: {Providers}", string.Join(", ", selectedProviders));
         
         var allCitations = new ConcurrentBag<CitationModel>();
         var allErrors = new ConcurrentBag<CitationError>();
         
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             _logger.LogInformation("Attempting authorization...");
             var isAuthSuccess = await _authService.TryAuthorizeAsync();
             if (!isAuthSuccess)
@@ -55,6 +107,9 @@ public class CitationService : ICitationService
             }
             
             _logger.LogInformation("Authorization successful");
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
             _logger.LogInformation("Fetching external vehicles...");
             
             var vehiclesResponse = await _vehicleService.GetExternalVehiclesAsync();
@@ -73,8 +128,7 @@ public class CitationService : ICitationService
                 throw new InvalidOperationException(fatalError);
             }
             
-            var availableProviders = Enum
-                .GetValues<CitationProviderType>()
+            var availableProviders = selectedProviders
                 .Where(p => _readers.ContainsKey(p))
                 .ToList();
             
@@ -83,19 +137,31 @@ public class CitationService : ICitationService
                 vehicles.Length,
                 availableProviders.Count);
             
+            // Set up progress tracking
+            _processStateService.ResetProgress();
+            _processStateService.SetTotalVehicles(vehicles.Length);
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
             var processingTasks = new List<Task>();
             var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2); // Limit concurrent operations
+            
+            var processedVehicles = new ConcurrentDictionary<string, bool>();
             
             foreach (var vehicle in vehicles)
             {
                 foreach (var provider in availableProviders)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
                     var task = ProcessVehicleProviderAsync(
                         vehicle,
                         provider, 
                         allCitations,
                         allErrors,
-                        semaphore);
+                        semaphore,
+                        processedVehicles,
+                        cancellationToken);
                     processingTasks.Add(task);
                 }
             }
@@ -154,8 +220,10 @@ public class CitationService : ICitationService
                     providerCitations.Key);
             }
             
+            cancellationToken.ThrowIfCancellationRequested();
+            
             // Send citations to server
-            await SendCitationsToServerAsync(citationsList, vehicles);
+            await SendCitationsToServerAsync(citationsList, vehicles, cancellationToken);
             
             return citationsList;
         }
@@ -171,12 +239,16 @@ public class CitationService : ICitationService
         CitationProviderType citationProviderProvider,
         ConcurrentBag<CitationModel> allCitations,
         ConcurrentBag<CitationError> allErrors,
-        SemaphoreSlim semaphore)
+        SemaphoreSlim semaphore,
+        ConcurrentDictionary<string, bool> processedVehicles,
+        CancellationToken cancellationToken)
     {
-        await semaphore.WaitAsync();
+        await semaphore.WaitAsync(cancellationToken);
         
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             if (!_readers.TryGetValue(citationProviderProvider, out var reader))
             {
                 _logger.LogWarning("No reader found for citationProviderProvider {Provider}", citationProviderProvider);
@@ -198,6 +270,7 @@ public class CitationService : ICitationService
                 foreach (var citation in citations)
                 {
                     allCitations.Add(citation);
+                    _processStateService.IncrementViolationCount();
                 }
                 
                 if (citations.Any())
@@ -220,6 +293,13 @@ public class CitationService : ICitationService
                     citationProviderProvider, 
                     response.Error.Message);
             }
+            
+            // Track vehicle progress (only increment once per vehicle, not per provider)
+            var vehicleKey = $"{vehicle.Tag}_{vehicle.State}";
+            if (processedVehicles.TryAdd(vehicleKey, true))
+            {
+                _processStateService.IncrementProcessedVehicles();
+            }
         }
         catch (Exception ex)
         {
@@ -235,13 +315,18 @@ public class CitationService : ICitationService
         }
     }
     
-    private async Task SendCitationsToServerAsync(List<CitationModel> citations, ExternalVehicleDto[] vehicles)
+    private async Task SendCitationsToServerAsync(
+        List<CitationModel> citations,
+        ExternalVehicleDto[] vehicles, 
+        CancellationToken cancellationToken)
     {
         if (!citations.Any())
         {
             _logger.LogInformation("No citations to send to server");
             return;
         }
+        
+        cancellationToken.ThrowIfCancellationRequested();
         
         _logger.LogInformation("Starting to send {CitationCount} citations to server", citations.Count);
         
@@ -255,9 +340,12 @@ public class CitationService : ICitationService
         
         foreach (var citation in citations)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             var task = SendSingleCitationAsync(citation, vehicleLookup, semaphore, 
                 () => Interlocked.Increment(ref successCount),
-                () => Interlocked.Increment(ref failureCount));
+                () => Interlocked.Increment(ref failureCount),
+                cancellationToken);
             sendingTasks.Add(task);
         }
         
@@ -274,12 +362,15 @@ public class CitationService : ICitationService
         Dictionary<string, ExternalVehicleDto> vehicleLookup,
         SemaphoreSlim semaphore,
         Action onSuccess,
-        Action onFailure)
+        Action onFailure,
+        CancellationToken cancellationToken)
     {
-        await semaphore.WaitAsync();
+        await semaphore.WaitAsync(cancellationToken);
         
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            
             var parkingViolation = _citationMapper.MapToParkingViolation(citation, vehicleLookup);
             var response = await _violationService.CreateParkingViolationAsync(parkingViolation);
             if (response.IsSuccess)

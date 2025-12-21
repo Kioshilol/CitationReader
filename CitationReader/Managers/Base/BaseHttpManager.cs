@@ -34,7 +34,8 @@ public abstract class BaseHttpManager
         HttpMethod method,
         string endpoint,
         object? requestBody = null,
-        string? token = null) where T : class
+        string? token = null,
+        Func<BaseResponse<T>, bool>? skipRetryPredicate = null) where T : class
     {
         for (var attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -45,6 +46,16 @@ public abstract class BaseHttpManager
                 if (result.IsSuccess)
                 {
                     return result;
+                }
+                
+                if (skipRetryPredicate?.Invoke(result) == true)
+                {
+                    Logger.LogInformation(
+                        "Skipping retries for response with reason {Reason} due to skip predicate and return success",
+                        result.Reason);
+                    var response = BaseResponse<T>.Success(result.Result, result.Message);
+                    response.Reason = result.Reason;
+                    return response;
                 }
 
                 if (attempt >= MaxRetries - 1)

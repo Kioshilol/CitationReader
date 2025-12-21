@@ -1,5 +1,6 @@
 using CitationReader.Common;
 using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Models.Base;
 using CitationReader.Models.Citation;
 using CitationReader.Models.Citation.Internal;
@@ -10,7 +11,6 @@ namespace CitationReader.Readers;
 
 public class VanguardCitationReader : BaseHttpReader, ICitationReader
 {
-    private const string Name = "Vanguard";
     private const string Url = "https://www.payparkingnotice.com/api/";
     
     public VanguardCitationReader()
@@ -98,7 +98,7 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
             var parkingViolation = new CitationModel
             {
                 NoticeNumber = item.NoticeNumber,
-                Agency = Name,
+                Agency = CitationProviderType.Vanguard.GetDisplayName(),
                 Address = item.LotAddress,
                 Tag = item.Lpn,
                 State = item.LpnState,

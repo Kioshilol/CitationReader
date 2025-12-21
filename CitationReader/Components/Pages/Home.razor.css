@@ -1,0 +1,577 @@
+/* Custom styles for the Citation Reader Home page */
+
+/* Ensure the main container takes full height and prevents page scrolling */
+.citation-reader-container {
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Provider Selector Styling */
+.provider-selector {
+    min-width: 250px;
+}
+
+.provider-dropdown {
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.provider-dropdown:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15), 0 4px 12px rgba(0, 0, 0, 0.12);
+    background: #ffffff;
+    outline: none;
+}
+
+.provider-dropdown:hover:not(:disabled) {
+    border-color: #6c757d;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+}
+
+.provider-dropdown:disabled {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.provider-dropdown option {
+    padding: 8px 12px;
+    font-weight: 500;
+}
+
+/* Button Group Styling */
+.button-group {
+    align-items: center;
+}
+
+/* Citation Lookup Button */
+.citation-lookup-btn {
+    padding: 10px 20px;
+    font-weight: 600;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    border: none;
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.citation-lookup-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.citation-lookup-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 25px rgba(0, 123, 255, 0.4);
+    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
+}
+
+.citation-lookup-btn:hover::before {
+    left: 100%;
+}
+
+.citation-lookup-btn:active {
+    transform: translateY(-1px);
+}
+
+.main-action-btn {
+    padding: 12px 24px;
+    font-weight: 600;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transition: all 0.3s ease;
+    min-width: 200px;
+}
+
+.main-action-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+.main-action-btn:active {
+    transform: translateY(0);
+}
+
+.main-action-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Clear Logs Button */
+.btn-outline-secondary {
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-outline-secondary:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Status Card Styling */
+.status-card {
+    border: none;
+    border-radius: 16px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+}
+
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+.status-running {
+    background-color: #28a745;
+    box-shadow: 0 0 8px rgba(40, 167, 69, 0.4);
+}
+
+.status-idle {
+    background-color: #6c757d;
+    animation: none;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(40, 167, 69, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+    }
+}
+
+.stat-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6c757d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #212529;
+}
+
+/* Log Container Styling */
+.log-container {
+    background: #f8f9fa;
+    border-radius: 0 0 12px 12px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    height: 100%;
+    max-height: 100%;
+}
+
+/* Ensure proper height constraints for flex layout */
+.min-h-0 {
+    min-height: 0;
+}
+
+.log-entry {
+    display: grid;
+    grid-template-columns: 100px 80px 1fr;
+    gap: 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid #e9ecef;
+    transition: background-color 0.2s ease;
+}
+
+.log-entry:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.log-timestamp {
+    color: #6c757d;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+.log-level {
+    font-weight: 700;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    text-align: center;
+}
+
+.log-message {
+    color: #212529;
+    word-wrap: break-word;
+}
+
+/* Log Level Colors */
+.log-info .log-level {
+    background-color: #d1ecf1;
+    color: #0c5460;
+}
+
+.log-warning .log-level {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.log-error .log-level {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.log-critical .log-level {
+    background-color: #f5c6cb;
+    color: #491217;
+}
+
+.log-debug .log-level {
+    background-color: #e2e3e5;
+    color: #383d41;
+}
+
+.log-trace .log-level {
+    background-color: #f8f9fa;
+    color: #6c757d;
+}
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6c757d;
+    text-align: center;
+    padding: 40px;
+}
+
+.empty-state i {
+    color: #0d6efd;
+    margin-bottom: 16px;
+}
+
+/* Card Styling */
+.card {
+    border: none;
+    border-radius: 16px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.card-header {
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    border-bottom: 1px solid #e9ecef;
+    border-radius: 16px 16px 0 0 !important;
+    padding: 16px 20px;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+/* Form Switch Styling */
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+.form-check-input:focus {
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .provider-selector {
+        min-width: 200px;
+    }
+    
+    .main-action-btn {
+        min-width: 150px;
+        padding: 10px 16px;
+    }
+    
+    .log-entry {
+        grid-template-columns: 80px 60px 1fr;
+        gap: 8px;
+        padding: 6px 12px;
+    }
+    
+    .stat-value {
+        font-size: 16px;
+    }
+}
+
+/* Smooth transitions for all interactive elements */
+* {
+    transition: all 0.2s ease;
+}
+
+/* Custom scrollbar for log container */
+.log-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* Citation Lookup Modal Styling */
+.citation-lookup-modal {
+    max-width: 500px;
+}
+
+.citation-lookup-modal .modal-content {
+    border: none;
+    border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+}
+
+.citation-lookup-modal .modal-header {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: white;
+    border-bottom: none;
+    padding: 20px 24px;
+    position: relative;
+}
+
+.citation-lookup-modal .modal-header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, #007bff, #00d4ff, #007bff);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+.citation-lookup-modal .modal-title {
+    font-weight: 700;
+    font-size: 1.25rem;
+    margin: 0;
+}
+
+.citation-lookup-modal .btn-close {
+    filter: brightness(0) invert(1);
+    opacity: 0.8;
+    transition: all 0.3s ease;
+}
+
+.citation-lookup-modal .btn-close:hover {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.citation-lookup-modal .modal-body {
+    padding: 30px 24px;
+    background: #ffffff;
+}
+
+.citation-lookup-modal .form-label {
+    color: #495057;
+    font-size: 14px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+}
+
+.citation-lookup-modal .form-label i {
+    color: #007bff;
+    margin-right: 6px;
+}
+
+.provider-select {
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.provider-select:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.15), 0 4px 12px rgba(0, 0, 0, 0.12);
+    background: #ffffff;
+    outline: none;
+}
+
+.provider-select:hover {
+    border-color: #6c757d;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    transform: translateY(-1px);
+}
+
+.plate-input {
+    border: 2px solid #e9ecef;
+    border-radius: 12px;
+    padding: 12px 16px;
+    font-size: 16px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    transition: all 0.3s ease;
+}
+
+.plate-input:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.15), 0 4px 12px rgba(0, 0, 0, 0.12);
+    background: #ffffff;
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.plate-input::placeholder {
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    color: #6c757d;
+}
+
+.lookup-submit-btn {
+    padding: 12px 24px;
+    font-weight: 600;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    border: none;
+    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.lookup-submit-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+}
+
+.lookup-submit-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 25px rgba(40, 167, 69, 0.4);
+    background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%);
+}
+
+.lookup-submit-btn:hover::before {
+    left: 100%;
+}
+
+.lookup-submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1) !important;
+}
+
+.lookup-submit-btn:active:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+/* Modal backdrop styling */
+.modal-backdrop.show {
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+}
+
+/* Form text styling */
+.citation-lookup-modal .form-text {
+    color: #6c757d;
+    font-size: 12px;
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+}
+
+.citation-lookup-modal .form-text i {
+    color: #17a2b8;
+    margin-right: 4px;
+}
+
+/* Animation for modal appearance */
+.citation-lookup-modal .modal-content {
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* Responsive modal design */
+@media (max-width: 576px) {
+    .citation-lookup-modal {
+        max-width: 95%;
+        margin: 10px auto;
+    }
+    
+    .citation-lookup-modal .modal-body {
+        padding: 20px 16px;
+    }
+    
+    .citation-lookup-modal .modal-header {
+        padding: 16px 20px;
+    }
+}

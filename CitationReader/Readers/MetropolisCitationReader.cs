@@ -1,5 +1,6 @@
 ﻿using CitationReader.Common;
 using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Models.Base;
 using CitationReader.Models.Citation;
 using CitationReader.Models.Citation.Internal;
@@ -10,7 +11,6 @@ namespace CitationReader.Readers;
 
 public class MetropolisCitationReader : BaseHttpReader, ICitationReader
 {
-    private const string Name = "Metropolis";
     private const string Url = "https://site.metropolis.io/api/violation/customer/violations/";
 
     public MetropolisCitationReader()
@@ -99,7 +99,7 @@ public class MetropolisCitationReader : BaseHttpReader, ICitationReader
             var parkingViolation = new CitationModel
             {
                 NoticeNumber = item.ExtId,
-                Agency = Name,
+                Agency = CitationProviderType.Metropolis.GetDisplayName(),
                 Address = $"{item.ViolationItemView.SiteAddressInfo.Street}," +
                           $" {item.ViolationItemView.SiteAddressInfo.City}," +
                           $" {item.ViolationItemView.SiteAddressInfo.StateCode}" +

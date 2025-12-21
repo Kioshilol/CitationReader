@@ -23,8 +23,18 @@ public class ViolationManager : BaseHttpManager, IViolationManager
         
         var token = _tokenCacheProvider.GetCachedToken();
         return RequestAsync<ParkingViolation>(
-            HttpMethod.Get,
+            HttpMethod.Post,
             "ExternalViolation/create",
-            token: token);
+            parkingViolation,
+            token,
+            CreateSuccessResponseCallback);
+        
+        bool CreateSuccessResponseCallback(BaseResponse<ParkingViolation> baseResponse)
+        {
+            var errorMessage = baseResponse.Message ?? "";
+            return errorMessage.Contains("Violation already exists") ||
+                   errorMessage.Contains("Violation already exists for") || 
+                   errorMessage.Contains("VIOLATION_EXISTS");
+        }
     }
 }

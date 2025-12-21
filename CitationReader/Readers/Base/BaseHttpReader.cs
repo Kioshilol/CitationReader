@@ -11,13 +11,12 @@ public abstract class BaseHttpReader
     private const int MaxRetries = 5;
     private const int RetryDelayMs = 1000;
     
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly HttpClientType _httpClientType;
+    private readonly HttpClient _httpClient;
     
     public BaseHttpReader(HttpClientType httpClientType)
     {
-        _httpClientType = httpClientType;
-        _httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
+        var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
+        _httpClient = httpClientFactory.CreateClient(httpClientType.ToString());
         Logger = Program.ServiceProvider.GetService<ILogger<BaseHttpReader>>()!;
     }
     
@@ -52,13 +51,15 @@ public abstract class BaseHttpReader
                     response.Reason = result.Reason;
                     return response;
                 }
+                
+                Logger.LogWarning("API request failed with status {StatusCode}: {ResponseContent}", result.Reason, result.Message);
 
                 if (attempt >= MaxRetries - 1)
                 {
                     return result;
                 }
                 
-                Logger.LogWarning(
+                Logger.LogError(
                     "Request failed with reason {Reason}, retrying. Attempt {Attempt}/{MaxRetries}",
                     result.Reason,
                     attempt + 1,
@@ -109,9 +110,8 @@ public abstract class BaseHttpReader
 
                 Logger.LogDebug("Request body: {RequestBody}", jsonContent);
             }
-
-            using var httpClient = _httpClientFactory.CreateClient(_httpClientType.ToString());
-            using var response = await httpClient.SendAsync(request);
+            
+            using var response = await _httpClient.SendAsync(request);
             var responseContent = await response.Content.ReadAsStringAsync();
 
             Logger.LogInformation("Response status: {StatusCode}", response.StatusCode);
@@ -151,7 +151,6 @@ public abstract class BaseHttpReader
             var statusCode = (int)response.StatusCode;
             var errorMessage = HttpStatusCodeExtensions.GetErrorMessageForStatusCode(statusCode, responseContent);
             
-            Logger.LogError("API request failed with status {StatusCode}: {ResponseContent}", statusCode, responseContent);
             return BaseResponse<T>.Failure(statusCode, errorMessage);
         }
         catch (HttpRequestException ex)
