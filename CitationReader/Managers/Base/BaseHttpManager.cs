@@ -51,8 +51,9 @@ public abstract class BaseHttpManager
                 if (skipRetryPredicate?.Invoke(result) == true)
                 {
                     Logger.LogInformation(
-                        "Skipping retries for response with reason {Reason} due to skip predicate and return success",
-                        result.Reason);
+                        "Skipping retries for response with reason {Reason} due to skip predicate and return success. {Message}",
+                        result.Reason,
+                        result.Message);
                     var response = BaseResponse<T>.Success(result.Result, result.Message);
                     response.Reason = result.Reason;
                     return response;

@@ -115,7 +115,8 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                 FineType = (int)FineType.Parking,
                 IsActive = item.TicketStatus.ToLower() != "Ready",
                 Link = Link,
-                CitationProviderType = SupportedProviderType
+                CitationProviderType = SupportedProviderType,
+                Note = item.TicketStatus
             };
 
             yield return parkingViolation;

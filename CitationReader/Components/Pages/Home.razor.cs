@@ -188,7 +188,10 @@ public partial class Home : ComponentBase, IDisposable
 
     private async Task StopProcess()
     {
-        if (!ProcessStateService.IsProcessRunning || _isStopping) return;
+        if (!ProcessStateService.IsProcessRunning || _isStopping)
+        {
+            return;
+        }
 
         _isStopping = true;
         StateHasChanged();

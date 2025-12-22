@@ -45,7 +45,11 @@ public class CitationService : ICitationService
         return ReadCitationsFromProvidersAsync(allProviders, cancellationToken);
     }
 
-    public async Task<IEnumerable<CitationModel>> ReadCitationsByProviderAndPlateNumberAsync(CitationProviderType provider, string licensePlate, string state = "NY", CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<CitationModel>> ReadCitationsByProviderAndPlateNumberAsync(
+        CitationProviderType provider, 
+        string licensePlate, 
+        string state = "NY",
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting citation lookup for plate '{LicensePlate}' in state '{State}' using provider '{Provider}'", licensePlate, state, provider);
         
@@ -62,7 +66,6 @@ public class CitationService : ICitationService
             _logger.LogDebug("Processing plate {LicensePlate} ({State}) with provider {Provider}", licensePlate, state, provider);
             
             var response = await reader.ReadCitationsAsync(licensePlate, state);
-            
             if (response is { IsSuccess: true, Data: not null })
             {
                 var citations = response.Data.ToList();
@@ -75,16 +78,18 @@ public class CitationService : ICitationService
                 _logger.LogWarning("Error reading citations for plate {LicensePlate} from {Provider}: {Error}", licensePlate, provider, response.Error.Message);
             }
             
-            return Enumerable.Empty<CitationModel>();
+            return [];
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Exception reading citations for plate {LicensePlate} from provider {Provider}", licensePlate, provider);
-            return Enumerable.Empty<CitationModel>();
+            return [];
         }
     }
 
-    public async Task<IEnumerable<CitationModel>> ReadCitationsFromProvidersAsync(IEnumerable<CitationProviderType> providers, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<CitationModel>> ReadCitationsFromProvidersAsync(
+        IEnumerable<CitationProviderType> providers, 
+        CancellationToken cancellationToken = default)
     {
         var startTime = DateTime.UtcNow;
         var selectedProviders = providers.ToList();

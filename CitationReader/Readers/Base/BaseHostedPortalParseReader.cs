@@ -52,11 +52,13 @@ public class BaseHostedPortalParseReader : IDisposable
         Logger = Program.ServiceProvider.GetService<ILogger<BaseHostedPortalParseReader>>()!;
         var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
         _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseHostedCitationReader.ToString());
-
+        
         _baseUrl = baseUrl.TrimEnd('/');
         _portalUrl = $"{_baseUrl}/Account/Portal";
         _searchUrl = $"{_baseUrl}/Account/Citations/Search";
         _agency = agency;
+        
+        SetFormSubmissionHeaders();
     }
 
     protected async Task<BaseResponse<List<ParkingViolation>>> SearchCitationAsync(string plateNumber, string stateCode)
@@ -219,10 +221,6 @@ public class BaseHostedPortalParseReader : IDisposable
                 var formData = CreateFormData(plateNumber, stateId, token);
                 var content = new FormUrlEncodedContent(formData);
 
-                // Set headers for form submission
-                SetFormSubmissionHeaders();
-
-                // Add delay to mimic human behavior
                 if (attempt > 0)
                 {
                     await Task.Delay(RetryDelayMs * attempt);

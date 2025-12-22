@@ -38,7 +38,7 @@ public class CoflCitationReader : BaseHostedPortalParseReader, ICitationReader
                     response.Reason);
             }
 
-            if (response.Result is null || response.Result.Any())
+            if (response.Result is null || !response.Result.Any())
             {
                 Logger.LogInformation("No citations found for vehicle: {CarDetails}", carDetails);
                 return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
