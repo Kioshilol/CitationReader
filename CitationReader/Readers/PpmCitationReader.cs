@@ -1,335 +1,853 @@
 ﻿using CitationReader.Enums;
 using CitationReader.Models.Citation.Internal;
-using CitationReader.Readers.Base;
 using CitationReader.Readers.Interfaces;
 using System.Text.RegularExpressions;
 using CitationReader.Extensions;
+using CitationReader.Models.Base;
 
 namespace CitationReader.Readers;
 
-public class PpmCitationReader : BaseParseReader, ICitationReader
+public class PpmCitationReader : ICitationReader
 {
-    public PpmCitationReader() 
-        : base(HttpClientType.ParseCitationReader)
-    {
-    }
-
-    public override CitationProviderType SupportedProviderType => CitationProviderType.ProfessionalParkingManagement;
-    public override string Link => "https://paymyviolations.com";
-    protected override string BaseUrl => "https://paymyviolations.com/";
-    protected override string ProviderName => CitationProviderType.ProfessionalParkingManagement.GetDisplayName();
-    protected override string GetLicensePlateFieldName() => "plate_number";
-    protected override string GetStateFieldName() => "plate_state";
-
-    protected override string[] GetNoResultsIndicators() => new[]
-    {
-        "no citations",
-        "no violations", 
-        "not found"
-    };
-
-    protected override string[] GetCitationNumberPatterns() => new[]
-    {
-        @"citation[^:]*:\s*([A-Z0-9\-]+)",
-        @"notice[^:]*:\s*([A-Z0-9\-]+)",
-        @"violation[^:]*:\s*([A-Z0-9\-]+)"
-    };
-
-    protected override List<CitationModel> ParseProviderSpecificFormat(
-        string html, 
-        string licensePlate,
-        string state)
-    {
-        return ParseCardBasedCitations(
-            html, 
-            licensePlate,
-            state);
-    }
-
-    protected override string GetTokenFieldName() => "_token";
+    private const string BaseUrl = "https://paymyviolations.com/";
     
-    private List<CitationModel> ParseCardBasedCitations(
-        string html,
+    private readonly string _providerName = CitationProviderType.ProfessionalParkingManagement.GetDisplayName();
+    private readonly HttpClient _httpClient;
+    private readonly ILogger<PpmCitationReader> _logger;
+    
+    public PpmCitationReader(IHttpClientFactory httpClientFactory, ILogger<PpmCitationReader> logger)
+    {
+        _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseCitationReader.ToString());
+        _logger = logger;
+    }
+
+    public CitationProviderType SupportedProviderType => CitationProviderType.ProfessionalParkingManagement;
+    public string Link => "https://paymyviolations.com";
+
+    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(
         string licensePlate,
         string state)
     {
-        var citations = new List<CitationModel>();
+        state = state.ToUpper();
+        var carDetails = $"{licensePlate} ({state})";
         
         try
         {
-            Logger.LogDebug("Attempting to parse card-based citation format for PPM");
+            _logger.LogInformation("Starting citation search for {CarDetails} using PPM reader", carDetails);
             
-            const string citationBlockPattern = @"<div[^>]*>[\s\S]*?(?:NOTICE\s+NUMBER|Notice\s+Number)[\s\S]*?</div>";
-            var citationBlocks = Regex.Matches(
-                html,
-                citationBlockPattern, 
-                RegexOptions.IgnoreCase | RegexOptions.Multiline);
-            if (citationBlocks.Count == 0)
+            // Step 1: Get the initial form page
+            var initialResponse = await GetPageAsync(BaseUrl);
+            if (!initialResponse.IsSuccess)
             {
-                const string alternativePattern = @"(?:<tr[^>]*>|<div[^>]*>)[\s\S]*?(\d{3}-\d{3}-\d{3})[\s\S]*?(?:</tr>|</div>)";
-                citationBlocks = Regex.Matches(
-                    html, 
-                    alternativePattern, 
-                    RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                _logger.LogWarning("Failed to load initial form page: {Error}", initialResponse.Message);
+                return BaseCitationResult<IEnumerable<CitationModel>>.CreateError(
+                    "Failed to load search form",
+                    SupportedProviderType,
+                    carDetails,
+                    state,
+                    initialResponse.Reason);
+            }
+
+            // Step 2: Create form data and extract tokens
+            var pageContent = initialResponse.Result;
+            var formData = new List<KeyValuePair<string, string>>
+            {
+                new("plate_number", licensePlate),
+                new("plate_state", "FL_89")
+            };
+            
+            // Extract CSRF token
+            if (!string.IsNullOrEmpty(pageContent))
+            {
+                ExtractAndAddTokens(pageContent, formData);
             }
             
-            if (citationBlocks.Count == 0)
+            // Extract form action URL
+            var formActionUrl = ExtractFormActionUrl(pageContent);
+            _logger.LogInformation("Form action URL: {FormActionUrl}", formActionUrl);
+            
+            // Log form data
+            _logger.LogInformation("Form data being submitted:");
+            foreach (var kvp in formData)
             {
-                const string broadPattern = @"(?:<tr[^>]*>|<div[^>]*>|<td[^>]*>)[\s\S]*?(\d{3}[-\s]\d{3}[-\s]\d{3})[\s\S]*?(?:</tr>|</div>|</td>)";
-                citationBlocks = Regex.Matches(
-                    html,
-                    broadPattern, 
-                    RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                _logger.LogInformation("  {Key} = {Value}", kvp.Key, kvp.Value.Length > 50 ? kvp.Value[..50] + "..." : kvp.Value);
             }
             
-            Logger.LogDebug("Found {Count} potential citation blocks", citationBlocks.Count);
+            var formContent = new FormUrlEncodedContent(formData);
             
-            foreach (Match block in citationBlocks)
+            // Add delay to mimic human behavior
+            await Task.Delay(1500);
+            
+            // Step 3: Submit form
+            var submitResponse = await SubmitFormAsync(formActionUrl, formContent);
+            if (!submitResponse.IsSuccess)
             {
-                var blockHtml = block.Value;
-                var citation = ExtractCitationFromCardBlock(blockHtml, licensePlate, state);
-                if (citation == null)
+                _logger.LogWarning("Form submission failed for {CarDetails}: {Error}", carDetails, submitResponse.Message);
+                
+                if (submitResponse.Message?.Contains("Token not provided", StringComparison.OrdinalIgnoreCase) == true ||
+                    submitResponse.Message?.Contains("no citations", StringComparison.OrdinalIgnoreCase) == true ||
+                    submitResponse.Message?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    continue;
+                    _logger.LogInformation("No citations found for {CarDetails}", carDetails);
+                    return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
+                        ArraySegment<CitationModel>.Empty,
+                        state);
                 }
                 
-                citations.Add(citation);
-                Logger.LogDebug("Successfully extracted citation: {NoticeNumber}", citation.NoticeNumber);
+                return BaseCitationResult<IEnumerable<CitationModel>>.CreateError(
+                    submitResponse.Message ?? "Form submission failed",
+                    SupportedProviderType,
+                    carDetails,
+                    state,
+                    submitResponse.Reason);
             }
+
+            // Step 4: Handle response (JSON redirect or direct HTML)
+            var responseContent = submitResponse.Result;
+            string? citationPageHtml = null;
             
+            if (responseContent.Contains("\"success\":true", StringComparison.OrdinalIgnoreCase) && 
+                responseContent.Contains("\"location\":", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Form submission returned JSON redirect response");
+                
+                var redirectLocation = ExtractRedirectLocation(responseContent);
+                if (!string.IsNullOrEmpty(redirectLocation))
+                {
+                    _logger.LogInformation("Following redirect to citation page: {Location}", redirectLocation);
+                    
+                    var citationPageResponse = await GetPageAsync(redirectLocation);
+                    if (citationPageResponse.IsSuccess)
+                    {
+                        citationPageHtml = citationPageResponse.Result;
+                        _logger.LogInformation("Successfully retrieved citation page HTML");
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to retrieve citation page: {Error}", citationPageResponse.Message);
+                        return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
+                            ArraySegment<CitationModel>.Empty,
+                            state);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Could not extract redirect location from JSON response");
+                    return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
+                        ArraySegment<CitationModel>.Empty,
+                        state);
+                }
+            }
+            else
+            {
+                citationPageHtml = responseContent;
+                _logger.LogInformation("Form submission returned direct HTML response");
+            }
+
+            // Step 5: Parse citations from HTML
+            var citations = ParseCitationsFromHtml(citationPageHtml, licensePlate, state);
             if (!citations.Any())
             {
-                citations.AddRange(ExtractCitationsFromFullHtml(html, licensePlate, state));
+                _logger.LogInformation("No citations found for vehicle: {CarDetails}", carDetails);
+                return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(
+                    ArraySegment<CitationModel>.Empty,
+                    state);
             }
+            
+            _logger.LogInformation("Found {Count} citations for vehicle: {CarDetails}", citations.Count, carDetails);
+            
+            return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(citations, state);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error parsing card-based citations for PPM");
-        }
-        
-        return citations;
-    }
-
-    private CitationModel? ExtractCitationFromCardBlock(
-        string blockHtml,
-        string licensePlate,
-        string state)
-    {
-        try
-        {
-            var cleanText = CleanHtmlText(blockHtml);
+            _logger.LogError(ex, "Exception occurred while reading citations for vehicle: {CarDetails}", carDetails);
             
-            var noticeNumberPatterns = new[]
-            {
-                @"(\d{3}-\d{3}-\d{3})",           // 274-380-862
-                @"(\d{3}\s+\d{3}\s+\d{3})",       // 274 380 862
-                @"(\d{9})",                       // 274380862
-                @"Notice\s+Number[:\s]*(\d+[-\s]*\d+[-\s]*\d+)", // Notice Number: 274-380-862
-                @"NOTICE\s+NUMBER[:\s]*(\d+[-\s]*\d+[-\s]*\d+)"  // NOTICE NUMBER: 274-380-862
-            };
-            
-            string? noticeNumber = null;
-            foreach (var pattern in noticeNumberPatterns)
-            {
-                var match = Regex.Match(cleanText, pattern, RegexOptions.IgnoreCase);
-                if (!match.Success)
-                {
-                    continue;
-                }
-                
-                noticeNumber = match.Groups[1].Value.Replace(" ", "-");
-                break;
-            }
-            
-            if (string.IsNullOrEmpty(noticeNumber))
-            {
-                Logger.LogDebug("No notice number found in block");
-                return null;
-            }
-            
-            var amountPatterns = new[]
-            {
-                @"\$(\d+\.?\d*)",                 // $94.99
-                @"Total[:\s]*\$?(\d+\.?\d*)",     // Total: $94.99
-                @"Amount[:\s]*\$?(\d+\.?\d*)",    // Amount: $94.99
-                @"(\d+\.?\d*)\s*USD"              // 94.99 USD
-            };
-            
-            decimal amount = 0;
-            foreach (var pattern in amountPatterns)
-            {
-                var matches = Regex.Matches(cleanText, pattern, RegexOptions.IgnoreCase);
-                foreach (Match match in matches)
-                {
-                    if (!decimal.TryParse(match.Groups[1].Value, out var parsedAmount))
-                    {
-                        continue;
-                    }
-                    
-                    if (parsedAmount > amount)
-                    {
-                        amount = parsedAmount;
-                    }
-                }
-            }
-            
-            var datePatterns = new[]
-            {
-                @"(\d{1,2}/\d{1,2}/\d{4})",       // 08/22/2025
-                @"(\d{4}-\d{1,2}-\d{1,2})",       // 2025-08-22
-                @"(\w+\s+\d{1,2},?\s+\d{4})"      // August 22, 2025
-            };
-            
-            var issueDate = DateTime.MinValue;
-            foreach (var pattern in datePatterns)
-            {
-                var match = Regex.Match(cleanText, pattern, RegexOptions.IgnoreCase);
-                if (!match.Success || !DateTime.TryParse(match.Groups[1].Value, out var parsedDate))
-                {
-                    continue;
-                }
-                
-                issueDate = parsedDate;
-                break;
-            }
-            
-            const string locationPattern = @"(\d+\s+[A-Z\s]+(?:AVE|ST|RD|BLVD|DR|LN|CT|PL|WAY)[^,]*(?:,\s*[A-Z]{2}\s+\d{5})?)";
-            var locationMatch = Regex.Match(cleanText, locationPattern, RegexOptions.IgnoreCase);
-            var location = locationMatch.Success ? locationMatch.Groups[1].Value.Trim() : "";
-            
-            var paymentStatus = PaymentStatus.New;
-            if (cleanText.Contains("paid", StringComparison.OrdinalIgnoreCase) ||
-                cleanText.Contains("settled", StringComparison.OrdinalIgnoreCase))
-            {
-                paymentStatus = PaymentStatus.Paid;
-            }
-            
-            var violationPatterns = new[]
-            { 
-                "Failure to Register or Pay in Advance",
-                "Non Payment",
-                "Expired Meter",
-                "No Permit",
-                "Overtime Parking"
-            };
-            
-            var violationType = "";
-            foreach (var pattern in violationPatterns)
-            {
-                if (!cleanText.Contains(pattern, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-                violationType = pattern;
-                break;
-            }
-            
-            var citation = new CitationModel
-            {
-                NoticeNumber = noticeNumber,
-                IssueDate = issueDate,
-                Amount = amount,
-                Agency = ProviderName,
-                Tag = licensePlate,
-                State = state,
-                Currency = "USD",
-                PaymentStatus = (int)paymentStatus,
-                FineType = (int)FineType.Parking,
-                IsActive = paymentStatus != PaymentStatus.Paid,
-                Link = Link,
-                CitationProviderType = SupportedProviderType,
-                Address = location,
-                Note = violationType
-            };
-            
-            Logger.LogDebug(
-                "Extracted citation from card block: {NoticeNumber}, Amount: {Amount}, Date: {Date}", 
-                citation.NoticeNumber,
-                citation.Amount, 
-                citation.IssueDate);
-            
-            return citation;
-        }
-        catch (Exception ex)
-        {
-            Logger.LogDebug(ex, "Error extracting citation from card block");
-            return null;
+            return BaseCitationResult<IEnumerable<CitationModel>>.CreateError(
+                "Exception occurred while reading citations: " + ex.Message,
+                SupportedProviderType,
+                carDetails,
+                state,
+                -1);
         }
     }
 
-    private List<CitationModel> ExtractCitationsFromFullHtml(
-        string html,
-        string licensePlate,
-        string state)
+    private List<CitationModel> ParseCitationsFromHtml(string? html, string licensePlate, string state)
     {
         var citations = new List<CitationModel>();
         
+        if (string.IsNullOrEmpty(html))
+        {
+            return citations;
+        }
+        
         try
         {
-            Logger.LogDebug("Attempting to extract citations from full HTML for PPM");
+            _logger.LogDebug("Starting HTML parsing for PPM citations");
+            _logger.LogDebug("HTML length: {Length}", html.Length);
             
-            const string noticeNumberPattern = @"(\d{3}[-\s]\d{3}[-\s]\d{3})";
+            // Check for no results indicators
+            var noResultsIndicators = new[] { "no citations", "no violations", "not found" };
+            if (noResultsIndicators.Any(indicator => html.Contains(indicator, StringComparison.OrdinalIgnoreCase)))
+            {
+                _logger.LogDebug("Found no results indicator in HTML");
+                return citations;
+            }
+            
+            // First, try to parse as single notice format
+            var singleCitation = ParseSingleNoticeFormat(html, licensePlate, state);
+            if (singleCitation != null)
+            {
+                citations.Add(singleCitation);
+                _logger.LogDebug("Successfully parsed single notice format");
+                return citations;
+            }
+            
+            // If not single notice, parse as multiple notices format
+            _logger.LogDebug("Single notice format not detected, trying multiple notices format");
+            
+            // Find all citation numbers in the format XXX-XXX-XXX
+            const string noticeNumberPattern = @"(\d{3}-\d{3}-\d{3})";
             var noticeMatches = Regex.Matches(html, noticeNumberPattern);
+            
+            _logger.LogDebug("Found {Count} potential notice numbers", noticeMatches.Count);
             
             var foundNoticeNumbers = new HashSet<string>();
             
             foreach (Match match in noticeMatches)
             {
-                var noticeNumber = match.Groups[1].Value.Replace(" ", "-");
-
+                var noticeNumber = match.Groups[1].Value;
+                
                 if (!foundNoticeNumbers.Add(noticeNumber))
                 {
-                    continue;
+                    continue; // Skip duplicates
                 }
-
-                var contextStart = Math.Max(0, match.Index - 500);
-                var contextEnd = Math.Min(html.Length, match.Index + 500);
+                
+                _logger.LogDebug("Processing notice number: {NoticeNumber}", noticeNumber);
+                
+                // Extract context around this notice number - larger window to capture details panel
+                var contextStart = Math.Max(0, match.Index - 2000);
+                var contextEnd = Math.Min(html.Length, match.Index + 4000);
                 var context = html.Substring(contextStart, contextEnd - contextStart);
                 
-                var citation = ExtractCitationFromCardBlock(context, licensePlate, state);
+                // Extract citation data from this context
+                var citation = ExtractCitationFromContext(context, noticeNumber, licensePlate, state);
                 if (citation != null)
                 {
                     citations.Add(citation);
-                }
-                else
-                {
-                    citations.Add(new CitationModel
-                    {
-                        NoticeNumber = noticeNumber,
-                        CitationNumber = noticeNumber,
-                        Agency = ProviderName,
-                        Tag = licensePlate,
-                        State = state,
-                        Currency = "USD",
-                        PaymentStatus = (int)PaymentStatus.New,
-                        FineType = (int)FineType.Parking,
-                        IsActive = true,
-                        Link = Link,
-                        CitationProviderType = SupportedProviderType
-                    });
+                    _logger.LogDebug("Successfully extracted citation: {NoticeNumber}, Amount: {Amount}, Address: {Address}", 
+                        citation.NoticeNumber, citation.Amount, citation.Address);
                 }
             }
-            
-            Logger.LogDebug("Extracted {Count} citations from full HTML", citations.Count);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error extracting citations from full HTML for PPM");
+            _logger.LogError(ex, "Error parsing citations from HTML");
         }
         
         return citations;
     }
-
-    private static string CleanHtmlText(string html)
+    
+    private CitationModel? ParseSingleNoticeFormat(string html, string licensePlate, string state)
     {
-        if (string.IsNullOrEmpty(html))
+        try
         {
-            return string.Empty;
+            _logger.LogDebug("Attempting to parse single notice format");
+            _logger.LogDebug("HTML length: {Length}", html.Length);
+            
+            // Log a sample of the HTML to see what we're working with
+            var htmlSample = html.Length > 1000 ? html.Substring(0, 1000) : html;
+            _logger.LogDebug("HTML sample (first 1000 chars): {HtmlSample}", htmlSample);
+            
+            _logger.LogDebug("HTML contains NOTICE NUMBER: {HasNoticeNumber}", html.Contains("NOTICE NUMBER", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains LICENSE PLATE: {HasLicensePlate}", html.Contains("LICENSE PLATE", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains ENTRY DATE/TIME: {HasEntryDate}", html.Contains("ENTRY DATE/TIME", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains EXIT DATE/TIME: {HasExitDate}", html.Contains("EXIT DATE/TIME", StringComparison.OrdinalIgnoreCase));
+            
+            // Also check for alternative formats
+            _logger.LogDebug("HTML contains 'Notice Number': {HasNoticeNumberAlt}", html.Contains("Notice Number", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains 'License Plate': {HasLicensePlateAlt}", html.Contains("License Plate", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains 'Entry Date': {HasEntryDateAlt}", html.Contains("Entry Date", StringComparison.OrdinalIgnoreCase));
+            _logger.LogDebug("HTML contains 'Exit Date': {HasExitDateAlt}", html.Contains("Exit Date", StringComparison.OrdinalIgnoreCase));
+            
+            // Check if this is a single notice format by looking for specific indicators
+            // Single notice format should have the div class="label" structure AND only one citation number
+            var hasLabelDivStructure = html.Contains(@"<div class=""label"">", StringComparison.OrdinalIgnoreCase);
+            var hasNoticeNumber = html.Contains("NOTICE NUMBER", StringComparison.OrdinalIgnoreCase) || 
+                                  html.Contains("Notice Number", StringComparison.OrdinalIgnoreCase);
+            var hasLicensePlate = html.Contains("LICENSE PLATE", StringComparison.OrdinalIgnoreCase) || 
+                                  html.Contains("License Plate", StringComparison.OrdinalIgnoreCase);
+            
+            // Count citation numbers to distinguish single vs multiple notices
+            var citationNumberMatches = Regex.Matches(html, @"\d{3}-\d{3}-\d{3}");
+            var citationCount = citationNumberMatches.Count;
+            
+            _logger.LogDebug("HTML contains div class label structure: {HasLabelDivStructure}", hasLabelDivStructure);
+            _logger.LogDebug("HTML contains citation numbers count: {CitationCount}", citationCount);
+            
+            // Single notice format should have:
+            // 1. The div class="label" structure (specific to single notice pages)
+            // 2. Only ONE citation number
+            // 3. Notice Number and License Plate fields
+            if (!hasLabelDivStructure || citationCount != 1 || !hasNoticeNumber || !hasLicensePlate)
+            {
+                _logger.LogDebug("Single notice format not detected - LabelDiv: {HasLabelDiv}, CitationCount: {Count}, NoticeNumber: {HasNoticeNumber}, LicensePlate: {HasLicensePlate}", 
+                    hasLabelDivStructure, citationCount, hasNoticeNumber, hasLicensePlate);
+                return null;
+            }
+            
+            _logger.LogDebug("Single notice format detected - has label div structure and exactly 1 citation number");
+            
+            // Extract notice number with more flexible patterns
+            string? noticeNumber = null;
+            var noticeNumberPatterns = new[]
+            {
+                @"NOTICE\s+NUMBER[^>]*>([^<]*(\d{3}-\d{3}-\d{3})[^<]*)",     // NOTICE NUMBER>216-291-764
+                @"Notice\s+Number[^>]*>([^<]*(\d{3}-\d{3}-\d{3})[^<]*)",     // Notice Number>216-291-764
+                @"NOTICE\s+NUMBER.*?(\d{3}-\d{3}-\d{3})",                    // NOTICE NUMBER anywhere before 216-291-764
+                @"Notice\s+Number.*?(\d{3}-\d{3}-\d{3})",                    // Notice Number anywhere before 216-291-764
+                @"(\d{3}-\d{3}-\d{3})"                                       // Just find any 216-291-764 pattern
+            };
+            
+            foreach (var pattern in noticeNumberPatterns)
+            {
+                var noticeNumberMatch = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (noticeNumberMatch.Success)
+                {
+                    // For patterns with 2 groups, use the second group (the number), otherwise use the first
+                    noticeNumber = noticeNumberMatch.Groups.Count > 2 ? noticeNumberMatch.Groups[2].Value : noticeNumberMatch.Groups[1].Value;
+                    _logger.LogDebug("Found notice number: {NoticeNumber} using pattern: {Pattern}", noticeNumber, pattern);
+                    break;
+                }
+            }
+            
+            if (string.IsNullOrEmpty(noticeNumber))
+            {
+                _logger.LogDebug("Could not extract notice number from single notice format");
+                return null;
+            }
+            
+            // Extract amount - look for "Amount Due" with more flexible patterns
+            decimal amount = 0;
+            var amountPatterns = new[]
+            {
+                @"Amount\s+Due[^>]*>\$(\d+\.\d{2})",           // Amount Due>$59.99
+                @"Amount\s+Due[^$]*\$(\d+\.\d{2})",           // Amount Due ... $59.99
+                @">Amount\s+Due<[^$]*\$(\d+\.\d{2})",         // >Amount Due< ... $59.99
+                @"Amount\s+Due.*?\$(\d+\.\d{2})",             // Amount Due anywhere before $59.99
+                @"Amount\s+Due\s*\n\s*\$(\d+\.\d{2})",        // Amount Due\n$59.99 (with line break)
+                @"Amount\s+Due\s*<[^>]*>\s*\$(\d+\.\d{2})",   // Amount Due<br>$59.99 (with HTML break)
+                @"\$(\d+\.\d{2})[^>]*Amount\s+Due",           // $59.99 before Amount Due
+                @"<td[^>]*>\$(\d+\.\d{2})</td>"               // Table cell with amount
+            };
+            
+            foreach (var pattern in amountPatterns)
+            {
+                var amountMatch = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (amountMatch.Success && decimal.TryParse(amountMatch.Groups[1].Value, out amount))
+                {
+                    _logger.LogDebug("Found amount: {Amount} using pattern: {Pattern}", amount, pattern);
+                    break;
+                }
+            }
+            
+            // Extract Entry Date/Time with more flexible patterns
+            DateTime? entryDate = null;
+            var entryDatePatterns = new[]
+            {
+                @"ENTRY\s+DATE/TIME[^>]*>([^<]*(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))[^<]*)",
+                @"ENTRY\s+DATE/TIME[^>]*>\s*(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))",
+                @"ENTRY\s+DATE/TIME.*?(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))"
+            };
+            
+            foreach (var pattern in entryDatePatterns)
+            {
+                var entryDateMatch = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (entryDateMatch.Success)
+                {
+                    var dateText = entryDateMatch.Groups.Count > 2 ? entryDateMatch.Groups[2].Value : entryDateMatch.Groups[1].Value;
+                    if (DateTime.TryParse(dateText.Trim(), out var parsedEntryDate))
+                    {
+                        entryDate = parsedEntryDate;
+                        _logger.LogDebug("Found entry date: {EntryDate} using pattern: {Pattern}", entryDate, pattern);
+                        break;
+                    }
+                }
+            }
+            
+            // Extract Exit Date/Time with more flexible patterns
+            DateTime? exitDate = null;
+            var exitDatePatterns = new[]
+            {
+                @"EXIT\s+DATE/TIME[^>]*>([^<]*(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))[^<]*)",
+                @"EXIT\s+DATE/TIME[^>]*>\s*(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))",
+                @"EXIT\s+DATE/TIME.*?(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))"
+            };
+            
+            foreach (var pattern in exitDatePatterns)
+            {
+                var exitDateMatch = Regex.Match(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                if (exitDateMatch.Success)
+                {
+                    var dateText = exitDateMatch.Groups.Count > 2 ? exitDateMatch.Groups[2].Value : exitDateMatch.Groups[1].Value;
+                    if (DateTime.TryParse(dateText.Trim(), out var parsedExitDate))
+                    {
+                        exitDate = parsedExitDate;
+                        _logger.LogDebug("Found exit date: {ExitDate} using pattern: {Pattern}", exitDate, pattern);
+                        break;
+                    }
+                }
+            }
+            
+            // Extract location - pattern based on actual HTML structure
+            var location = "";
+            var locationPattern = @"<div\s+class=""label"">Location</div>\s*<div\s+class=""detail"">(.*?)</div>";
+            var locationMatch = Regex.Match(html, locationPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            
+            if (locationMatch.Success)
+            {
+                var rawLocation = locationMatch.Groups[1].Value;
+                
+                // Clean up the location text - remove HTML tags and normalize whitespace
+                rawLocation = Regex.Replace(rawLocation, @"<br\s*/?>", " ", RegexOptions.IgnoreCase); // Replace <br> with space
+                rawLocation = Regex.Replace(rawLocation, @"<[^>]*>", " "); // Remove other HTML tags
+                rawLocation = Regex.Replace(rawLocation, @"\s+", " "); // Normalize whitespace
+                location = rawLocation.Trim();
+                
+                _logger.LogDebug("Found location: {Location}", location);
+            }
+            
+            // Extract notice type (violation type) - pattern based on actual HTML structure
+            var violationType = "";
+            var violationPattern = @"<div\s+class=""label"">Notice\s+Type</div>\s*<div\s+class=""detail"">([^<]+)</div>";
+            var violationMatch = Regex.Match(html, violationPattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            
+            if (violationMatch.Success)
+            {
+                violationType = violationMatch.Groups[1].Value.Trim();
+                _logger.LogDebug("Found violation type: {ViolationType}", violationType);
+            }
+            
+            var citation = new CitationModel
+            {
+                NoticeNumber = noticeNumber,
+                CitationNumber = noticeNumber,
+                IssueDate = exitDate, // Use exit date as issue date
+                Amount = amount,
+                Agency = _providerName,
+                Tag = licensePlate,
+                State = state,
+                Currency = "USD",
+                PaymentStatus = (int)PaymentStatus.New,
+                FineType = (int)FineType.Parking,
+                IsActive = true,
+                Link = Link,
+                CitationProviderType = SupportedProviderType,
+                Address = location,
+                Note = violationType,
+                StartDate = entryDate,
+                EndDate = exitDate
+            };
+            
+            _logger.LogDebug("Successfully parsed single notice: {NoticeNumber}, Amount: {Amount}, Location: {Location}", 
+                citation.NoticeNumber, citation.Amount, citation.Address);
+            
+            return citation;
         }
-        
-        var text = Regex.Replace(html, @"<[^>]+>", "");
-        text = System.Net.WebUtility.HtmlDecode(text);
-        text = Regex.Replace(text, @"\s+", " ").Trim();
-        return text;
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error parsing single notice format");
+            return null;
+        }
+    }
+    
+    private CitationModel? ExtractCitationFromContext(string context, string noticeNumber, string licensePlate, string state)
+    {
+        try
+        {
+            // Extract amount - look for Total amount first
+            decimal amount = 0;
+            var amountPatterns = new[]
+            {
+                @"id=[""']paym\d+[""'][^>]*>\$(\d+\.\d{2})",  // id="paym1">$88.99
+                @"Total[^>]*>\$(\d+\.\d{2})",               // Total>$88.99
+                @"\$(\d+\.\d{2})</span>",                   // $88.99</span>
+                @"\$(\d+\.\d{2})"                           // $88.99 anywhere
+            };
+            
+            foreach (var pattern in amountPatterns)
+            {
+                var amountMatch = Regex.Match(context, pattern, RegexOptions.IgnoreCase);
+                if (amountMatch.Success && decimal.TryParse(amountMatch.Groups[1].Value, out amount))
+                {
+                    _logger.LogDebug("Found amount {Amount} for notice {NoticeNumber} using pattern: {Pattern}", 
+                        amount, noticeNumber, pattern);
+                    break;
+                }
+            }
+            
+            // Extract date/time - prioritize Exit Date/Time from details panel, then main date field
+            DateTime? issueDate = null;
+            DateTime? entryDate = null;
+            DateTime? exitDate = null;
+            
+            // First, try to extract Entry and Exit dates from the details panel
+            var entryDatePattern = @"<div\s+class=""violation-detail-title""[^>]*>Entry\s+Date/Time</div>\s*<div\s+class=""violation-detail-info"">([^<]+)</div>";
+            var exitDatePattern = @"<div\s+class=""violation-detail-title""[^>]*>Exit\s+Date/Time</div>\s*<div\s+class=""violation-detail-info"">([^<]+)</div>";
+            
+            var entryMatch = Regex.Match(context, entryDatePattern, RegexOptions.IgnoreCase);
+            if (entryMatch.Success && DateTime.TryParse(entryMatch.Groups[1].Value.Trim(), out var parsedEntryDate))
+            {
+                entryDate = parsedEntryDate;
+                _logger.LogDebug("Found entry date {EntryDate} for notice {NoticeNumber}", entryDate, noticeNumber);
+            }
+            
+            var exitMatch = Regex.Match(context, exitDatePattern, RegexOptions.IgnoreCase);
+            if (exitMatch.Success && DateTime.TryParse(exitMatch.Groups[1].Value.Trim(), out var parsedExitDate))
+            {
+                exitDate = parsedExitDate;
+                _logger.LogDebug("Found exit date {ExitDate} for notice {NoticeNumber}", exitDate, noticeNumber);
+            }
+            
+            // Use Exit Date as the primary issue date, or fall back to main date patterns
+            if (exitDate.HasValue)
+            {
+                issueDate = exitDate;
+                _logger.LogDebug("Using exit date as issue date for notice {NoticeNumber}", noticeNumber);
+            }
+            else
+            {
+                // Fallback to main date field patterns
+                var datePatterns = new[]
+                {
+                    @"(\d{2}/\d{2}/\d{4}\s+\d{1,2}:\d{2}(?:am|pm))",  // 06/11/2021 10:46pm
+                    @"(\d{2}/\d{2}/\d{4})"                             // 06/11/2021
+                };
+                
+                foreach (var pattern in datePatterns)
+                {
+                    var dateMatch = Regex.Match(context, pattern, RegexOptions.IgnoreCase);
+                    if (dateMatch.Success && DateTime.TryParse(dateMatch.Groups[1].Value, out var parsedDate))
+                    {
+                        issueDate = parsedDate;
+                        _logger.LogDebug("Found main date {Date} for notice {NoticeNumber}", issueDate, noticeNumber);
+                        break;
+                    }
+                }
+            }
+            
+            // Extract address - look for street addresses
+            var location = "";
+            var addressPatterns = new[]
+            {
+                // Full address with state and zip - more flexible
+                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})",
+                // Address without zip - more flexible
+                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+)",
+                // Simple street address - more flexible
+                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY))",
+                // Specific patterns for the problematic addresses
+                @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})", // 2060 NE 2ND ST DEERFIELD BCH, FL 33441
+                @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+)" // 710 SW 16TH AVE MIAMI
+            };
+            
+            foreach (var pattern in addressPatterns)
+            {
+                var addressMatch = Regex.Match(context, pattern, RegexOptions.IgnoreCase);
+                if (addressMatch.Success)
+                {
+                    var potentialLocation = addressMatch.Groups[1].Value.Trim();
+                    potentialLocation = Regex.Replace(potentialLocation, @"\s+", " ");
+                    
+                    // Filter out contamination
+                    var contaminationTerms = new[] { "Non Payment", "Paid", "Total", "Charge", "Conv", "Fee" };
+                    var isClean = !contaminationTerms.Any(term => 
+                        potentialLocation.Contains(term, StringComparison.OrdinalIgnoreCase));
+                    
+                    if (isClean && potentialLocation.Length > 10)
+                    {
+                        location = potentialLocation;
+                        _logger.LogDebug("Found address {Address} for notice {NoticeNumber} using pattern: {Pattern}", location, noticeNumber, pattern);
+                        break;
+                    }
+                }
+            }
+            
+            // Extract violation type
+            var violationType = "";
+            var violationPatterns = new[] { "Non Payment", "Expired Meter", "No Permit", "Overtime Parking", "Failure to Register" };
+            
+            foreach (var pattern in violationPatterns)
+            {
+                if (context.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                {
+                    violationType = pattern;
+                    _logger.LogDebug("Found violation type {ViolationType} for notice {NoticeNumber}", violationType, noticeNumber);
+                    break;
+                }
+            }
+            
+            var citation = new CitationModel
+            {
+                NoticeNumber = noticeNumber,
+                CitationNumber = noticeNumber,
+                IssueDate = issueDate,
+                Amount = amount,
+                Agency = _providerName,
+                Tag = licensePlate,
+                State = state,
+                Currency = "USD",
+                PaymentStatus = (int)PaymentStatus.New,
+                FineType = (int)FineType.Parking,
+                IsActive = true,
+                Link = Link,
+                CitationProviderType = SupportedProviderType,
+                Address = location,
+                Note = violationType,
+                StartDate = entryDate,
+                EndDate = exitDate
+            };
+            
+            return citation;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Error extracting citation data from context for notice {NoticeNumber}", noticeNumber);
+            return null;
+        }
+    }
+
+    private async Task<BaseResponse<string>> GetPageAsync(string url)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            
+            request.Headers.Clear();
+            request.Headers.Add("User-Agent", 
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            request.Headers.Add("Accept", 
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+            request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
+            request.Headers.Add("Cache-Control", "no-cache");
+            request.Headers.Add("Upgrade-Insecure-Requests", "1");
+            
+            var response = await _httpClient.SendAsync(request);
+            var content = await response.Content.ReadAsStringAsync();
+            
+            _logger.LogDebug("GET request response status: {StatusCode}", response.StatusCode);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                return BaseResponse<string>.Success(content);
+            }
+            
+            var errorMessage = $"HTTP {(int)response.StatusCode}: GET request failed";
+            return BaseResponse<string>.Failure((int)response.StatusCode, errorMessage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception during GET request");
+            return BaseResponse<string>.Failure(-1, $"GET request exception: {ex.Message}");
+        }
+    }
+
+    private async Task<BaseResponse<string>> SubmitFormAsync(string url, FormUrlEncodedContent formContent)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            
+            request.Headers.Clear();
+            request.Headers.Add("User-Agent", 
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            request.Headers.Add("Accept", 
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+            request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
+            request.Headers.Add("Cache-Control", "max-age=0");
+            request.Headers.Add("Upgrade-Insecure-Requests", "1");
+            
+            var baseUri = new Uri(url);
+            request.Headers.Add("Origin", $"{baseUri.Scheme}://{baseUri.Host}");
+            request.Headers.Add("Referer", url);
+            
+            request.Content = formContent;
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded");
+            
+            var response = await _httpClient.SendAsync(request);
+            var content = await response.Content.ReadAsStringAsync();
+            
+            _logger.LogDebug("Form submission response status: {StatusCode}", response.StatusCode);
+            
+            if (content.Contains("\"success\":false", StringComparison.OrdinalIgnoreCase) && 
+                content.Contains("Token not provided", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Server returned JSON error about missing token, treating as no results");
+                return BaseResponse<string>.Failure(400, "Token not provided");
+            }
+            
+            if (response.IsSuccessStatusCode)
+            {
+                return BaseResponse<string>.Success(content);
+            }
+            
+            var errorMessage = $"HTTP {(int)response.StatusCode}: Form submission failed";
+            return BaseResponse<string>.Failure((int)response.StatusCode, errorMessage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Exception during form submission");
+            return BaseResponse<string>.Failure(-1, $"Form submission exception: {ex.Message}");
+        }
+    }
+
+    private void ExtractAndAddTokens(string html, List<KeyValuePair<string, string>> formData)
+    {
+        try
+        {
+            var tokenPatterns = new[]
+            {
+                (@"<input[^>]*name=['""]_token['""][^>]*value=['""]([^'""]*)['""]", "_token"),
+                (@"<input[^>]*name=['""]csrf_token['""][^>]*value=['""]([^'""]*)['""]", "csrf_token"),
+                (@"<meta[^>]*name=['""]csrf-token['""][^>]*content=['""]([^'""]*)['""]", "_token")
+            };
+            
+            foreach (var (pattern, tokenName) in tokenPatterns)
+            {
+                var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    var tokenValue = match.Groups[1].Value;
+                    if (!string.IsNullOrEmpty(tokenValue))
+                    {
+                        formData.Add(new KeyValuePair<string, string>("_token", tokenValue));
+                        _logger.LogDebug("Found token: {TokenName} = {TokenValue}", tokenName, tokenValue[..Math.Min(10, tokenValue.Length)] + "...");
+                        return; // Only add one token
+                    }
+                }
+            }
+            
+            _logger.LogWarning("No tokens found in HTML");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error extracting tokens from HTML");
+        }
+    }
+    
+    private string ExtractFormActionUrl(string html)
+    {
+        try
+        {
+            _logger.LogDebug("Extracting form action URL from HTML content");
+            
+            // Try multiple form patterns to find the search form
+            var formPatterns = new[]
+            {
+                // Standard form with action attribute
+                @"<form[^>]*action=['""]([^'""]*)['""][^>]*>",
+                @"<form[^>]*action=([^'""\s>]+)[^>]*>",
+                
+                // Form with method POST (likely search form)
+                @"<form[^>]*method=['""]post['""][^>]*action=['""]([^'""]*)['""][^>]*>",
+                @"<form[^>]*action=['""]([^'""]*)['""][^>]*method=['""]post['""][^>]*>"
+            };
+            
+            string? foundActionUrl = null;
+            
+            foreach (var pattern in formPatterns)
+            {
+                var matches = Regex.Matches(html, pattern, RegexOptions.IgnoreCase | RegexOptions.Multiline);
+                
+                foreach (Match match in matches)
+                {
+                    if (match.Groups.Count > 1 && !string.IsNullOrEmpty(match.Groups[1].Value))
+                    {
+                        foundActionUrl = match.Groups[1].Value;
+                        _logger.LogDebug("Found form action URL: {ActionUrl}", foundActionUrl);
+                        break;
+                    }
+                }
+                
+                if (!string.IsNullOrEmpty(foundActionUrl))
+                    break;
+            }
+            
+            if (!string.IsNullOrEmpty(foundActionUrl))
+            {
+                // Process the found action URL
+                if (string.IsNullOrEmpty(foundActionUrl) || foundActionUrl == "#")
+                {
+                    // Empty or # action means submit to current page
+                    _logger.LogDebug("Form action is empty or #, using base URL");
+                    return BaseUrl;
+                }
+                
+                // If it's a relative URL starting with /, make it absolute
+                if (foundActionUrl.StartsWith("/"))
+                {
+                    var baseUri = new Uri(BaseUrl);
+                    var absoluteUrl = $"{baseUri.Scheme}://{baseUri.Host}{foundActionUrl}";
+                    _logger.LogDebug("Converted relative URL {RelativeUrl} to absolute {AbsoluteUrl}", foundActionUrl, absoluteUrl);
+                    return absoluteUrl;
+                }
+                
+                // If it's already absolute, return as-is
+                if (foundActionUrl.StartsWith("http"))
+                {
+                    _logger.LogDebug("Using absolute URL: {AbsoluteUrl}", foundActionUrl);
+                    return foundActionUrl;
+                }
+                
+                // If it's a relative path without leading slash
+                var baseUriForRelative = new Uri(BaseUrl);
+                var resolvedUrl = new Uri(baseUriForRelative, foundActionUrl).ToString();
+                _logger.LogDebug("Resolved relative URL {RelativeUrl} to {ResolvedUrl}", foundActionUrl, resolvedUrl);
+                return resolvedUrl;
+            }
+            
+            // If no form action found at all, fall back to base URL
+            _logger.LogWarning("No form action found in HTML, using base URL for form submission");
+            return BaseUrl;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error extracting form action URL, using base URL");
+            return BaseUrl;
+        }
+    }
+    
+    private string? ExtractRedirectLocation(string jsonResponse)
+    {
+        try
+        {
+            const string locationPattern = @"""location""\s*:\s*""([^""]*)""";
+            var match = Regex.Match(jsonResponse, locationPattern, RegexOptions.IgnoreCase);
+            
+            if (match.Success)
+            {
+                var location = match.Groups[1].Value.Replace("\\/", "/");
+                
+                if (location.StartsWith("/"))
+                {
+                    var baseUri = new Uri(BaseUrl);
+                    return $"{baseUri.Scheme}://{baseUri.Host}{location}";
+                }
+                
+                if (location.StartsWith("http"))
+                {
+                    return location;
+                }
+                
+                var baseUriForRelative = new Uri(BaseUrl);
+                return new Uri(baseUriForRelative, location).ToString();
+            }
+            
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error extracting redirect location from JSON");
+            return null;
+        }
     }
 }
