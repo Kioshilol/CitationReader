@@ -15,7 +15,9 @@ public class PpmCitationReader : ICitationReader
     private readonly HttpClient _httpClient;
     private readonly ILogger<PpmCitationReader> _logger;
     
-    public PpmCitationReader(IHttpClientFactory httpClientFactory, ILogger<PpmCitationReader> logger)
+    public PpmCitationReader(
+        IHttpClientFactory httpClientFactory,
+        ILogger<PpmCitationReader> logger)
     {
         _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseCitationReader.ToString());
         _logger = logger;
@@ -62,17 +64,7 @@ public class PpmCitationReader : ICitationReader
                 ExtractAndAddTokens(pageContent, formData);
             }
             
-            // Extract form action URL
             var formActionUrl = ExtractFormActionUrl(pageContent);
-            _logger.LogInformation("Form action URL: {FormActionUrl}", formActionUrl);
-            
-            // Log form data
-            _logger.LogInformation("Form data being submitted:");
-            foreach (var kvp in formData)
-            {
-                _logger.LogInformation("  {Key} = {Value}", kvp.Key, kvp.Value.Length > 50 ? kvp.Value[..50] + "..." : kvp.Value);
-            }
-            
             var formContent = new FormUrlEncodedContent(formData);
             
             // Add delay to mimic human behavior
@@ -80,6 +72,10 @@ public class PpmCitationReader : ICitationReader
             
             // Step 3: Submit form
             var submitResponse = await SubmitFormAsync(formActionUrl, formContent);
+            if (submitResponse.Message.Contains("Token"))
+            {
+                
+            }
             if (!submitResponse.IsSuccess)
             {
                 _logger.LogWarning("Form submission failed for {CarDetails}: {Error}", carDetails, submitResponse.Message);
@@ -104,8 +100,7 @@ public class PpmCitationReader : ICitationReader
 
             // Step 4: Handle response (JSON redirect or direct HTML)
             var responseContent = submitResponse.Result;
-            string? citationPageHtml = null;
-            
+            string? citationPageHtml;
             if (responseContent.Contains("\"success\":true", StringComparison.OrdinalIgnoreCase) && 
                 responseContent.Contains("\"location\":", StringComparison.OrdinalIgnoreCase))
             {
@@ -174,7 +169,6 @@ public class PpmCitationReader : ICitationReader
     private List<CitationModel> ParseCitationsFromHtml(string? html, string licensePlate, string state)
     {
         var citations = new List<CitationModel>();
-        
         if (string.IsNullOrEmpty(html))
         {
             return citations;
@@ -251,26 +245,6 @@ public class PpmCitationReader : ICitationReader
     {
         try
         {
-            _logger.LogDebug("Attempting to parse single notice format");
-            _logger.LogDebug("HTML length: {Length}", html.Length);
-            
-            // Log a sample of the HTML to see what we're working with
-            var htmlSample = html.Length > 1000 ? html.Substring(0, 1000) : html;
-            _logger.LogDebug("HTML sample (first 1000 chars): {HtmlSample}", htmlSample);
-            
-            _logger.LogDebug("HTML contains NOTICE NUMBER: {HasNoticeNumber}", html.Contains("NOTICE NUMBER", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains LICENSE PLATE: {HasLicensePlate}", html.Contains("LICENSE PLATE", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains ENTRY DATE/TIME: {HasEntryDate}", html.Contains("ENTRY DATE/TIME", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains EXIT DATE/TIME: {HasExitDate}", html.Contains("EXIT DATE/TIME", StringComparison.OrdinalIgnoreCase));
-            
-            // Also check for alternative formats
-            _logger.LogDebug("HTML contains 'Notice Number': {HasNoticeNumberAlt}", html.Contains("Notice Number", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains 'License Plate': {HasLicensePlateAlt}", html.Contains("License Plate", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains 'Entry Date': {HasEntryDateAlt}", html.Contains("Entry Date", StringComparison.OrdinalIgnoreCase));
-            _logger.LogDebug("HTML contains 'Exit Date': {HasExitDateAlt}", html.Contains("Exit Date", StringComparison.OrdinalIgnoreCase));
-            
-            // Check if this is a single notice format by looking for specific indicators
-            // Single notice format should have the div class="label" structure AND only one citation number
             var hasLabelDivStructure = html.Contains(@"<div class=""label"">", StringComparison.OrdinalIgnoreCase);
             var hasNoticeNumber = html.Contains("NOTICE NUMBER", StringComparison.OrdinalIgnoreCase) || 
                                   html.Contains("Notice Number", StringComparison.OrdinalIgnoreCase);
