@@ -456,25 +456,6 @@ public class BaseHostedPortalParseReader : IDisposable
 
     private void SetFormSubmissionHeaders()
     {
-        // Clear any existing headers to avoid conflicts
-        _httpClient.DefaultRequestHeaders.Clear();
-        
-        // Add browser-like headers to appear more legitimate
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-        _httpClient.DefaultRequestHeaders.Add("Accept", 
-            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
-        _httpClient.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
-        _httpClient.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
-        _httpClient.DefaultRequestHeaders.Add("DNT", "1");
-        _httpClient.DefaultRequestHeaders.Add("Connection", "keep-alive");
-        _httpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
-        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
-        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
-        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
-        _httpClient.DefaultRequestHeaders.Add("Cache-Control", "max-age=0");
-        
-        // Add specific headers for form submission
         _httpClient.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
         _httpClient.DefaultRequestHeaders.Add("Referer", _portalUrl);
         _httpClient.DefaultRequestHeaders.Add("Origin", _baseUrl);

@@ -7,7 +7,6 @@ using CitationReader.Services.Huur.Violations;
 using CitationReader.Mappers;
 using System.Collections.Concurrent;
 using CitationReader.Models.Citation.Internal;
-using CitationReader.Services;
 
 namespace CitationReader.Services.Citation;
 
@@ -20,6 +19,27 @@ public class CitationService : ICitationService
     private readonly ICitationMapper _citationMapper;
     private readonly IProcessStateService _processStateService;
     private readonly Dictionary<CitationProviderType, ICitationReader> _readers;
+    
+    // Provider-specific rate limiting
+    private static readonly Dictionary<CitationProviderType, SemaphoreSlim> ProviderSemaphores = new();
+    private static readonly Dictionary<CitationProviderType, DateTime> ProviderLastRequest = new();
+    private static readonly object ProviderLock = new();
+    
+    private static readonly Dictionary<CitationProviderType, int> ProviderDelays = new()
+    {
+        { CitationProviderType.Metropolis, 200 },
+        { CitationProviderType.Vanguard, 200 },
+        { CitationProviderType.ProfessionalParkingManagement, 200 },
+        { CitationProviderType.CityOfFortLauderdale, 500 }
+    };
+    
+    private static readonly Dictionary<CitationProviderType, int> ProviderConcurrency = new()
+    {
+        { CitationProviderType.Metropolis, 10 },
+        { CitationProviderType.Vanguard, 10 },       
+        { CitationProviderType.ProfessionalParkingManagement, 10 }, 
+        { CitationProviderType.CityOfFortLauderdale, 2 }
+    };
 
     public CitationService(
         IEnumerable<ICitationReader> readers,
@@ -37,6 +57,59 @@ public class CitationService : ICitationService
         _citationMapper = citationMapper;
         _processStateService = processStateService;
         _readers = readers.ToDictionary(r => r.SupportedProviderType, r => r);
+        
+        // Initialize provider semaphores
+        InitializeProviderSemaphores();
+    }
+    
+    private static void InitializeProviderSemaphores()
+    {
+        lock (ProviderLock)
+        {
+            foreach (var provider in Enum.GetValues<CitationProviderType>())
+            {
+                if (!ProviderSemaphores.ContainsKey(provider))
+                {
+                    var concurrency = ProviderConcurrency.GetValueOrDefault(provider, 1);
+                    ProviderSemaphores[provider] = new SemaphoreSlim(concurrency, concurrency);
+                    ProviderLastRequest[provider] = DateTime.MinValue;
+                }
+            }
+        }
+    }
+    
+    private async Task ApplyProviderRateLimit(CitationProviderType provider, CancellationToken cancellationToken)
+    {
+        // Get provider-specific semaphore and timing
+        var semaphore = ProviderSemaphores[provider];
+        var requiredDelay = ProviderDelays.GetValueOrDefault(provider, 2000);
+        
+        // Wait for available slot
+        await semaphore.WaitAsync(cancellationToken);
+        
+        try
+        {
+            // Apply timing delay
+            lock (ProviderLock)
+            {
+                var now = DateTime.UtcNow;
+                var timeSinceLastRequest = now - ProviderLastRequest[provider];
+                var delayNeeded = Math.Max(0, requiredDelay - (int)timeSinceLastRequest.TotalMilliseconds);
+                
+                if (delayNeeded > 0)
+                {
+                    _logger.LogDebug("Provider {Provider} rate limiting: waiting {Delay}ms", provider, delayNeeded);
+                    Task.Delay(delayNeeded, cancellationToken).Wait(cancellationToken);
+                }
+                
+                ProviderLastRequest[provider] = DateTime.UtcNow;
+            }
+        }
+        finally
+        {
+            // Release the semaphore slot after the request is made
+            // Note: We'll release this in the calling method after the actual request
+        }
     }
 
     public Task<IEnumerable<CitationModel>> ReadAllCitationsAsync(CancellationToken cancellationToken = default)
@@ -154,7 +227,7 @@ public class CitationService : ICitationService
             cancellationToken.ThrowIfCancellationRequested();
             
             var processingTasks = new List<Task>();
-            var semaphore = new SemaphoreSlim(Environment.ProcessorCount * 2); // Limit concurrent operations
+            var semaphore = new SemaphoreSlim(100); // Allow high concurrency for bulk processing - provider-specific limits will control individual providers
             
             var processedVehicles = new ConcurrentDictionary<string, bool>();
             
@@ -271,9 +344,20 @@ public class CitationService : ICitationService
                 vehicle.State, 
                 citationProviderProvider);
             
-            var response = await reader.ReadCitationsAsync(
-                vehicle.Tag,
-                vehicle.State);
+            // Apply provider-specific rate limiting
+            await ApplyProviderRateLimit(citationProviderProvider, cancellationToken);
+            
+            BaseCitationResult<IEnumerable<CitationModel>> response;
+            try
+            {
+                response = await reader.ReadCitationsAsync(vehicle.Tag, vehicle.State);
+            }
+            finally
+            {
+                // Release the provider semaphore after the request
+                ProviderSemaphores[citationProviderProvider].Release();
+            }
+            
             if (response is { IsSuccess: true, Data: not null })
             {
                 var citations = response.Data.ToList();
@@ -318,6 +402,16 @@ public class CitationService : ICitationService
                 "Exception reading citations for vehicle {Tag} from citationProviderProvider {Provider}", 
                 vehicle.Tag,
                 citationProviderProvider);
+            
+            // Make sure to release provider semaphore on exception
+            try
+            {
+                ProviderSemaphores[citationProviderProvider].Release();
+            }
+            catch
+            {
+                // Ignore release errors
+            }
         }
         finally
         {
