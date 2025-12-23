@@ -398,6 +398,17 @@ public class PpmCitationReader : ICitationReader
                 }
             }
             
+            // Extract Issued Date as fallback when Entry/Exit dates are not available
+            DateTime? issuedDate = null;
+            var issuedDatePattern = @"<div\s+class=""label"">Issued\s+Date</div>\s*<div\s+class=""detail"">([^<]+)</div>";
+            var issuedDateMatch = Regex.Match(html, issuedDatePattern, RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            
+            if (issuedDateMatch.Success && DateTime.TryParse(issuedDateMatch.Groups[1].Value.Trim(), out var parsedIssuedDate))
+            {
+                issuedDate = parsedIssuedDate;
+                _logger.LogDebug("Found issued date: {IssuedDate}", issuedDate);
+            }
+            
             // Extract location - pattern based on actual HTML structure
             var location = "";
             var locationPattern = @"<div\s+class=""label"">Location</div>\s*<div\s+class=""detail"">(.*?)</div>";
@@ -427,11 +438,13 @@ public class PpmCitationReader : ICitationReader
                 _logger.LogDebug("Found violation type: {ViolationType}", violationType);
             }
             
+            // Determine the best issue date: Exit Date > Issued Date > Entry Date
+            var issueDate = exitDate ?? issuedDate ?? entryDate;
+            
             var citation = new CitationModel
             {
                 NoticeNumber = noticeNumber,
-                CitationNumber = noticeNumber,
-                IssueDate = exitDate, // Use exit date as issue date
+                IssueDate = issueDate,
                 Amount = amount,
                 Agency = _providerName,
                 Tag = licensePlate,
@@ -535,54 +548,79 @@ public class PpmCitationReader : ICitationReader
                 }
             }
             
-            // Extract address - look for street addresses
+            // Extract address - look for address in pay-multiple-reason class
             var location = "";
-            var addressPatterns = new[]
-            {
-                // Full address with state and zip - more flexible
-                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})",
-                // Address without zip - more flexible
-                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+)",
-                // Simple street address - more flexible
-                @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY))",
-                // Specific patterns for the problematic addresses
-                @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})", // 2060 NE 2ND ST DEERFIELD BCH, FL 33441
-                @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+)" // 710 SW 16TH AVE MIAMI
-            };
+            var addressPattern = @"<p\s+class=""pay-multiple-reason""[^>]*>([^<]+)</p>";
+            var addressMatch = Regex.Match(context, addressPattern, RegexOptions.IgnoreCase);
             
-            foreach (var pattern in addressPatterns)
+            if (addressMatch.Success)
             {
-                var addressMatch = Regex.Match(context, pattern, RegexOptions.IgnoreCase);
-                if (addressMatch.Success)
+                var rawAddress = addressMatch.Groups[1].Value.Trim();
+                // Clean up whitespace and normalize
+                location = Regex.Replace(rawAddress, @"\s+", " ");
+                _logger.LogDebug("Found address {Address} for notice {NoticeNumber} from pay-multiple-reason", location, noticeNumber);
+            }
+            else
+            {
+                // Fallback to original patterns if pay-multiple-reason not found
+                var fallbackPatterns = new[]
                 {
-                    var potentialLocation = addressMatch.Groups[1].Value.Trim();
-                    potentialLocation = Regex.Replace(potentialLocation, @"\s+", " ");
-                    
-                    // Filter out contamination
-                    var contaminationTerms = new[] { "Non Payment", "Paid", "Total", "Charge", "Conv", "Fee" };
-                    var isClean = !contaminationTerms.Any(term => 
-                        potentialLocation.Contains(term, StringComparison.OrdinalIgnoreCase));
-                    
-                    if (isClean && potentialLocation.Length > 10)
+                    // Full address with state and zip - more flexible
+                    @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})",
+                    // Address without zip - more flexible
+                    @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY)\s+[A-Z\s]+)",
+                    // Simple street address - more flexible
+                    @"(\d+\s+[A-Z0-9\s]+(?:AVE|AVENUE|ST|STREET|RD|ROAD|BLVD|BOULEVARD|DR|DRIVE|LN|LANE|CT|COURT|PL|PLACE|WAY))",
+                    // Specific patterns for the problematic addresses
+                    @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+,?\s*[A-Z]{2}\s+\d{5})", // 2060 NE 2ND ST DEERFIELD BCH, FL 33441
+                    @"(\d+\s+[A-Z]+\s+\d+(?:ST|ND|RD|TH)\s+(?:AVE|ST|STREET|AVENUE)\s+[A-Z\s]+)" // 710 SW 16TH AVE MIAMI
+                };
+                
+                foreach (var pattern in fallbackPatterns)
+                {
+                    var fallbackMatch = Regex.Match(context, pattern, RegexOptions.IgnoreCase);
+                    if (fallbackMatch.Success)
                     {
-                        location = potentialLocation;
-                        _logger.LogDebug("Found address {Address} for notice {NoticeNumber} using pattern: {Pattern}", location, noticeNumber, pattern);
-                        break;
+                        var potentialLocation = fallbackMatch.Groups[1].Value.Trim();
+                        potentialLocation = Regex.Replace(potentialLocation, @"\s+", " ");
+                        
+                        // Filter out contamination
+                        var contaminationTerms = new[] { "Non Payment", "Paid", "Total", "Charge", "Conv", "Fee" };
+                        var isClean = !contaminationTerms.Any(term => 
+                            potentialLocation.Contains(term, StringComparison.OrdinalIgnoreCase));
+                        
+                        if (isClean && potentialLocation.Length > 10)
+                        {
+                            location = potentialLocation;
+                            _logger.LogDebug("Found address {Address} for notice {NoticeNumber} using fallback pattern: {Pattern}", location, noticeNumber, pattern);
+                            break;
+                        }
                     }
                 }
             }
             
-            // Extract violation type
+            // Extract violation type - look for violation type in pay-multiple-reason detail class
             var violationType = "";
-            var violationPatterns = new[] { "Non Payment", "Expired Meter", "No Permit", "Overtime Parking", "Failure to Register" };
+            var violationPattern = @"<div\s+class=""pay-multiple-reason\s+detail\s+epy111""[^>]*>([^<]+)</div>";
+            var violationMatch = Regex.Match(context, violationPattern, RegexOptions.IgnoreCase);
             
-            foreach (var pattern in violationPatterns)
+            if (violationMatch.Success)
             {
-                if (context.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                violationType = violationMatch.Groups[1].Value.Trim();
+                _logger.LogDebug("Found violation type {ViolationType} for notice {NoticeNumber} from pay-multiple-reason detail", violationType, noticeNumber);
+            }
+            else
+            {
+                // Fallback to original patterns if pay-multiple-reason detail not found
+                var fallbackPatterns = new[] { "Non Payment", "Expired Meter", "No Permit", "Overtime Parking", "Failure to Register", "Overstay" };
+                foreach (var pattern in fallbackPatterns)
                 {
-                    violationType = pattern;
-                    _logger.LogDebug("Found violation type {ViolationType} for notice {NoticeNumber}", violationType, noticeNumber);
-                    break;
+                    if (context.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                    {
+                        violationType = pattern;
+                        _logger.LogDebug("Found violation type {ViolationType} for notice {NoticeNumber} using fallback", violationType, noticeNumber);
+                        break;
+                    }
                 }
             }
             
