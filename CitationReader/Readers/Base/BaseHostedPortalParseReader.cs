@@ -27,13 +27,21 @@ public class BaseHostedPortalParseReader : IDisposable
     private const int MaxRetries = 3;
     private const int RetryDelayMs = 1500;
     private const int RequestTimeoutMs = 30000;
+    private const int MinDelayBetweenSearchesMs = 2000; // 2 seconds between searches for bulk processing
+    private const int MaxConsecutiveSearches = 10; // Reset session after 10 searches
+    private const int BulkProcessingThreshold = 10; // If more than 10 searches in 5 minutes, use bulk mode
 
-    private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
     private readonly string _portalUrl;
     private readonly string _searchUrl;
     private readonly string _agency;
     private bool _disposed;
+    private HttpClient _httpClient;
+    
+    // Static fields for rate limiting across all instances
+    private static DateTime _lastSearchTime = DateTime.MinValue;
+    private static int _consecutiveSearchCount = 0;
+    private static readonly object _rateLimitLock = new object();
     
     protected readonly ILogger Logger;
 
@@ -50,19 +58,18 @@ public class BaseHostedPortalParseReader : IDisposable
         }
         
         Logger = Program.ServiceProvider.GetService<ILogger<BaseHostedPortalParseReader>>()!;
-        var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
-        _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseHostedCitationReader.ToString());
         
         _baseUrl = baseUrl.TrimEnd('/');
         _portalUrl = $"{_baseUrl}/Account/Portal";
         _searchUrl = $"{_baseUrl}/Account/Citations/Search";
         _agency = agency;
-        
-        SetFormSubmissionHeaders();
     }
 
     protected async Task<BaseResponse<List<ParkingViolation>>> SearchCitationAsync(string plateNumber, string stateCode)
     {
+        var httpClientFactory = Program.ServiceProvider.GetService<IHttpClientFactory>()!;
+        _httpClient = httpClientFactory.CreateClient(HttpClientType.ParseHostedCitationReader.ToString());
+        
         if (string.IsNullOrWhiteSpace(plateNumber))
         {
             return BaseResponse<List<ParkingViolation>>.Failure(400, "License plate number cannot be empty");
@@ -79,64 +86,99 @@ public class BaseHostedPortalParseReader : IDisposable
         {
             Logger.LogInformation("Starting citation search for {CarDetails}", carDetails);
 
-            // Step 1: Load portal page to get cookies and token
-            var portalResponse = await GetPageWithRetryAsync(_portalUrl);
-            if (!portalResponse.IsSuccess)
-            {
-                Logger.LogWarning("Failed to load portal page for {CarDetails}: {Error}", carDetails, portalResponse.Message);
-                return BaseResponse<List<ParkingViolation>>.Failure(portalResponse.Reason, 
-                    portalResponse.Message ?? "Failed to load portal page");
-            }
+            // Apply rate limiting for multiple searches
+            await ApplyRateLimiting(carDetails);
 
-            // Step 2: Parse verification token
-            var token = ExtractVerificationToken(portalResponse.Result);
-            if (string.IsNullOrEmpty(token))
+            // Try multiple approaches to avoid ASP.NET errors
+            for (var sessionAttempt = 0; sessionAttempt < 2; sessionAttempt++)
             {
-                Logger.LogWarning("Could not extract verification token for {CarDetails}", carDetails);
-                // Continue without token - some sites might work without it
-            }
-            else
-            {
-                Logger.LogDebug("Successfully extracted verification token for {CarDetails}", carDetails);
-            }
+                try
+                {
+                    Logger.LogDebug("Starting session attempt {Attempt} for {CarDetails}", sessionAttempt + 1, carDetails);
+                    
+                    // Reset headers for each session attempt
+                    SetFormSubmissionHeaders();
+                    
+                    // Step 1: Simulate full browser session - start with home page
+                    await SimulateBrowserSession();
+                    
+                    // Step 2: Load portal page to get cookies and token
+                    var portalResponse = await GetPageWithRetryAsync(_portalUrl);
+                    if (!portalResponse.IsSuccess)
+                    {
+                        Logger.LogWarning("Failed to load portal page for {CarDetails}: {Error}", carDetails, portalResponse.Message);
+                        if (sessionAttempt == 1) // Last attempt
+                            return BaseResponse<List<ParkingViolation>>.Failure(portalResponse.Reason, 
+                                portalResponse.Message ?? "Failed to load portal page");
+                        continue;
+                    }
 
-            // Step 3: Convert state code to ID
-            if (!TryGetStateId(stateCode, out var stateId))
-            {
-                Logger.LogWarning("Invalid state code provided: {StateCode}", stateCode);
-                return BaseResponse<List<ParkingViolation>>.Failure(400, $"Invalid state code: {stateCode}");
+                    // Step 3: Parse verification token
+                    var token = ExtractVerificationToken(portalResponse.Result);
+                    if (string.IsNullOrEmpty(token))
+                    {
+                        Logger.LogWarning("Could not extract verification token for {CarDetails}", carDetails);
+                        // Continue without token - some sites might work without it
+                    }
+                    else
+                    {
+                        Logger.LogDebug("Successfully extracted verification token for {CarDetails}", carDetails);
+                    }
+
+                    // Step 4: Convert state code to ID
+                    if (!TryGetStateId(stateCode, out var stateId))
+                    {
+                        Logger.LogWarning("Invalid state code provided: {StateCode}", stateCode);
+                        return BaseResponse<List<ParkingViolation>>.Failure(400, $"Invalid state code: {stateCode}");
+                    }
+
+                    Logger.LogDebug("Converted state {StateCode} to ID {StateId}", stateCode, stateId);
+
+                    // Add longer delay to mimic human behavior
+                    await Task.Delay(3000 + (sessionAttempt * 2000));
+                    
+                    // Step 5: Submit search with retry logic
+                    var searchResponse = await SubmitSearchWithRetryAsync(plateNumber, stateId, token, carDetails);
+                    if (!searchResponse.IsSuccess)
+                    {
+                        if (sessionAttempt == 1) // Last attempt
+                            return BaseResponse<List<ParkingViolation>>.Failure(searchResponse.Reason, searchResponse.Message);
+                        continue;
+                    }
+
+                    var resultPath = GetResultPath(searchResponse.Result);
+                    if (string.IsNullOrEmpty(resultPath))
+                    {
+                        Logger.LogInformation("No citations found for {CarDetails}", carDetails);
+                        return BaseResponse<List<ParkingViolation>>.Success(new List<ParkingViolation>());
+                    }
+
+                    // Step 6: Get and parse results with retry logic for ASP.NET errors
+                    var resultUrl = $"{_baseUrl}{resultPath}";
+                    
+                    var resultResponse = await GetResultsWithRetryAsync(resultUrl, carDetails);
+                    if (!resultResponse.IsSuccess)
+                    {
+                        if (sessionAttempt == 1) // Last attempt
+                            return BaseResponse<List<ParkingViolation>>.Failure(resultResponse.Reason, resultResponse.Message);
+                        continue;
+                    }
+                    
+                    var resultHtml = resultResponse.Result;
+                 
+                    var citations = ParseCitations(resultHtml, plateNumber, stateCode);
+                    Logger.LogInformation("Found {CitationCount} citations for {CarDetails}", citations.Count, carDetails);
+                    
+                    return BaseResponse<List<ParkingViolation>>.Success(citations);
+                }
+                catch (Exception ex) when (sessionAttempt < 1)
+                {
+                    Logger.LogWarning(ex, "Session attempt {Attempt} failed for {CarDetails}, trying again...", sessionAttempt + 1, carDetails);
+                    await Task.Delay(5000); // Wait before next session attempt
+                }
             }
-
-            Logger.LogDebug("Converted state {StateCode} to ID {StateId}", stateCode, stateId);
-
-            // Step 4: Submit search with retry logic
-            var searchResponse = await SubmitSearchWithRetryAsync(plateNumber, stateId, token, carDetails);
-            if (!searchResponse.IsSuccess)
-            {
-                return BaseResponse<List<ParkingViolation>>.Failure(searchResponse.Reason, searchResponse.Message);
-            }
-
-            var resultPath = GetResultPath(searchResponse.Result);
-            if (string.IsNullOrEmpty(resultPath))
-            {
-                Logger.LogInformation("No citations found for {CarDetails}", carDetails);
-                return BaseResponse<List<ParkingViolation>>.Success(new List<ParkingViolation>());
-            }
-
-            // Step 5: Get and parse results
-            var resultUrl = $"{_baseUrl}{resultPath}";
-            var resultResponse = await GetPageWithRetryAsync(resultUrl);
-            if (!resultResponse.IsSuccess)
-            {
-                Logger.LogWarning("Failed to load results page for {CarDetails}: {Error}", carDetails, resultResponse.Message);
-                return BaseResponse<List<ParkingViolation>>.Failure(resultResponse.Reason, 
-                    resultResponse.Message ?? "Failed to load results page");
-            }
-
-            var citations = ParseCitations(resultResponse.Result, plateNumber, stateCode);
-            Logger.LogInformation("Found {CitationCount} citations for {CarDetails}", citations.Count, carDetails);
             
-            return BaseResponse<List<ParkingViolation>>.Success(citations);
+            return BaseResponse<List<ParkingViolation>>.Failure(-1, "All session attempts failed due to server errors");
         }
         catch (Exception ex)
         {
@@ -269,12 +311,170 @@ public class BaseHostedPortalParseReader : IDisposable
         return BaseResponse<string>.Failure(-1, "All form submission attempts failed");
     }
 
+    private async Task<BaseResponse<string>> GetResultsWithRetryAsync(string resultUrl, string carDetails)
+    {
+        for (var attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            try
+            {
+                Logger.LogDebug("Getting results from {ResultUrl} for {CarDetails} (attempt {Attempt}/{MaxRetries})", 
+                    resultUrl, carDetails, attempt + 1, MaxRetries);
+
+                // Add a small delay before each attempt to give the server time to process
+                if (attempt > 0)
+                {
+                    await Task.Delay(RetryDelayMs * attempt);
+                }
+
+                var response = await _httpClient.GetAsync(resultUrl);
+                var resultHtml = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Results request failed with status {StatusCode} for {CarDetails}", 
+                        response.StatusCode, carDetails);
+                    
+                    if (attempt >= MaxRetries - 1)
+                    {
+                        return BaseResponse<string>.Failure((int)response.StatusCode, 
+                            $"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
+                    }
+                    continue;
+                }
+
+                // Check if we received an ASP.NET error page instead of citation data
+                if (IsAspNetErrorPage(resultHtml))
+                {
+                    Logger.LogWarning("Received ASP.NET error page on attempt {Attempt}/{MaxRetries} for {CarDetails}. URL: {ResultUrl}", 
+                        attempt + 1, MaxRetries, carDetails, resultUrl);
+                    
+                    if (attempt >= MaxRetries - 1)
+                    {
+                        Logger.LogError("All attempts failed due to ASP.NET errors for {CarDetails}. Final error page length: {Length}", 
+                            carDetails, resultHtml.Length);
+                        Logger.LogDebug("Final ASP.NET Error page content: {ErrorContent}", 
+                            resultHtml.Substring(0, Math.Min(500, resultHtml.Length)));
+                        return BaseResponse<string>.Failure(500, 
+                            "The citation website is currently experiencing technical difficulties. Please try again later.");
+                    }
+                    continue;
+                }
+
+                Logger.LogDebug("Successfully retrieved results for {CarDetails}", carDetails);
+                return BaseResponse<string>.Success(resultHtml);
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries - 1)
+            {
+                Logger.LogWarning(ex, "HTTP request failed on attempt {Attempt}/{MaxRetries} for results {CarDetails}, retrying...", 
+                    attempt + 1, MaxRetries, carDetails);
+            }
+            catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException && attempt < MaxRetries - 1)
+            {
+                Logger.LogWarning(ex, "Request timeout on attempt {Attempt}/{MaxRetries} for results {CarDetails}, retrying...", 
+                    attempt + 1, MaxRetries, carDetails);
+            }
+        }
+
+        return BaseResponse<string>.Failure(-1, "All result retrieval attempts failed");
+    }
+
+    private async Task SimulateBrowserSession()
+    {
+        try
+        {
+            Logger.LogDebug("Simulating browser session by visiting home page first");
+            
+            // Visit the home page first to establish a proper session
+            var homePageResponse = await _httpClient.GetAsync(_baseUrl);
+            if (homePageResponse.IsSuccessStatusCode)
+            {
+                Logger.LogDebug("Successfully visited home page");
+                // Small delay to mimic human browsing
+                await Task.Delay(1000);
+            }
+            else
+            {
+                Logger.LogWarning("Failed to visit home page, status: {StatusCode}", homePageResponse.StatusCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Error during browser session simulation, continuing anyway");
+        }
+    }
+
+    private async Task ApplyRateLimiting(string carDetails)
+    {
+        lock (_rateLimitLock)
+        {
+            var now = DateTime.UtcNow;
+            var timeSinceLastSearch = now - _lastSearchTime;
+            
+            // Check if we need to reset the session after too many consecutive searches
+            if (_consecutiveSearchCount >= MaxConsecutiveSearches)
+            {
+                Logger.LogInformation("Resetting session after {Count} consecutive searches - taking a 10 second break", _consecutiveSearchCount);
+                _consecutiveSearchCount = 0;
+                _lastSearchTime = now.AddMilliseconds(10000); // 10 second break
+            }
+            else
+            {
+                // For bulk processing, use minimal delays but still respect server limits
+                var requiredDelay = MinDelayBetweenSearchesMs;
+                
+                // Only add extra delay if we're getting close to the reset threshold
+                if (_consecutiveSearchCount >= 7) // Last 3 searches before reset
+                {
+                    requiredDelay += 1000; // Add just 1 second extra
+                }
+                
+                var actualDelay = Math.Max(0, requiredDelay - (int)timeSinceLastSearch.TotalMilliseconds);
+                
+                if (actualDelay > 0)
+                {
+                    Logger.LogDebug("Rate limiting: waiting {Delay}ms before search for {CarDetails} (consecutive search #{Count})", 
+                        actualDelay, carDetails, _consecutiveSearchCount + 1);
+                }
+                
+                _consecutiveSearchCount++;
+                _lastSearchTime = now.AddMilliseconds(actualDelay);
+            }
+        }
+        
+        // Apply the delay outside the lock
+        var delayToApply = Math.Max(0, (int)(_lastSearchTime - DateTime.UtcNow).TotalMilliseconds);
+        if (delayToApply > 0)
+        {
+            if (delayToApply > 5000) // Only log longer delays
+            {
+                Logger.LogInformation("Taking a {Delay}ms break before searching {CarDetails} to let server recover", 
+                    delayToApply, carDetails);
+            }
+            await Task.Delay(delayToApply);
+        }
+    }
+
     private void SetFormSubmissionHeaders()
     {
-        _httpClient.DefaultRequestHeaders.Remove("X-Requested-With");
-        _httpClient.DefaultRequestHeaders.Remove("Referer");
-        _httpClient.DefaultRequestHeaders.Remove("Origin");
-
+        // Clear any existing headers to avoid conflicts
+        _httpClient.DefaultRequestHeaders.Clear();
+        
+        // Add browser-like headers to appear more legitimate
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+        _httpClient.DefaultRequestHeaders.Add("Accept", 
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
+        _httpClient.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.9");
+        _httpClient.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
+        _httpClient.DefaultRequestHeaders.Add("DNT", "1");
+        _httpClient.DefaultRequestHeaders.Add("Connection", "keep-alive");
+        _httpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
+        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Dest", "document");
+        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Mode", "navigate");
+        _httpClient.DefaultRequestHeaders.Add("Sec-Fetch-Site", "same-origin");
+        _httpClient.DefaultRequestHeaders.Add("Cache-Control", "max-age=0");
+        
+        // Add specific headers for form submission
         _httpClient.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
         _httpClient.DefaultRequestHeaders.Add("Referer", _portalUrl);
         _httpClient.DefaultRequestHeaders.Add("Origin", _baseUrl);
@@ -286,7 +486,8 @@ public class BaseHostedPortalParseReader : IDisposable
         {
             { "PlateNumber", plateNumber.ToUpper() },
             { "StateId", stateId },
-            { "CitationNumber", "" }
+            { "CitationNumber", "" },
+            { "X-Requested-With", "XMLHttpRequest" }
         };
 
         if (!string.IsNullOrEmpty(token))
@@ -499,6 +700,29 @@ public class BaseHostedPortalParseReader : IDisposable
             "CLOSED PAID" => PaymentStatus.Paid,
             _ => PaymentStatus.Unknown
         };
+    }
+
+    private static bool IsAspNetErrorPage(string html)
+    {
+        if (string.IsNullOrEmpty(html))
+        {
+            return false;
+        }
+
+        // Check for common ASP.NET error page indicators
+        var errorIndicators = new[]
+        {
+            "An application error occurred on the server",
+            "Description: An application error occurred",
+            "current custom error settings for this application prevent the details",
+            "customErrors",
+            "web.config",
+            "Server Error in",
+            "Runtime Error"
+        };
+
+        return errorIndicators.Any(indicator => 
+            html.Contains(indicator, StringComparison.OrdinalIgnoreCase));
     }
 
     public void Dispose()

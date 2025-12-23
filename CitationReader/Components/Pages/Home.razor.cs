@@ -132,7 +132,7 @@ public partial class Home : ComponentBase, IDisposable
                     if (_selectedProvider.HasValue)
                     {
                         AddLogEntry(LogLevel.Information, $"📋 Running for selected provider: {GetProviderDisplayName(_selectedProvider.Value)}");
-                        result = await CitationService.ReadCitationsFromProvidersAsync(new[] { _selectedProvider.Value }, _cancellationTokenSource.Token);
+                        result = await CitationService.ReadCitationsFromProvidersAsync([_selectedProvider.Value], _cancellationTokenSource.Token);
                     }
                     else
                     {
@@ -285,7 +285,6 @@ public partial class Home : ComponentBase, IDisposable
         return provider.GetDisplayName();
     }
 
-    // Citation Lookup Modal methods
     private void OpenCitationLookupModal()
     {
         _showCitationLookupModal = true;
@@ -306,7 +305,6 @@ public partial class Home : ComponentBase, IDisposable
     private void FormatPlateNumber(ChangeEventArgs e)
     {
         var input = e.Value?.ToString()?.ToUpperInvariant() ?? string.Empty;
-        // Remove any non-alphanumeric characters
         _lookupPlateNumber = new string(input.Where(char.IsLetterOrDigit).ToArray());
         StateHasChanged();
     }

@@ -114,7 +114,8 @@ public class MetropolisCitationReader : BaseHttpReader, ICitationReader
                 PaymentStatus = (int)PaymentStatus.New,
                 FineType = (int)FineType.Parking,
                 IsActive = true,
-                Link = Link
+                Link = Link,
+                Note = $"Reason: {item.ViolationItemView.Reason.Name}, Description: {item.ViolationItemView.Reason.Description}",
             };
 
             yield return parkingViolation;

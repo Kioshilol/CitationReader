@@ -601,7 +601,6 @@ public class PpmCitationReader : ICitationReader
             var citation = new CitationModel
             {
                 NoticeNumber = noticeNumber,
-                CitationNumber = noticeNumber,
                 IssueDate = issueDate,
                 Amount = amount,
                 Agency = _providerName,

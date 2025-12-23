@@ -132,6 +132,11 @@ public class CitationService : ICitationService
                 _logger.LogCritical(fatalError);
                 throw new InvalidOperationException(fatalError);
             }
+
+            //TODO: only for FL state
+            vehicles = vehicles
+                .Where(v => v.State == "FL")
+                .ToArray();
             
             var availableProviders = selectedProviders
                 .Where(p => _readers.ContainsKey(p))
