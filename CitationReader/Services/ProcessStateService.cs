@@ -115,8 +115,8 @@ public class ProcessStateService : IProcessStateService
         lock (_stateLock)
         {
             _processedVehicles = 0;
-            _totalVehicles = 0;
             _violationCount = 0;
+            // Don't reset _totalVehicles here - it should be set separately
         }
     }
 

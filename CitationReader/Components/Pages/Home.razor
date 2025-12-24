@@ -61,45 +61,120 @@
         </div>
     </div>
 
-    <!-- Status Bar -->
-    <div class="card mb-3 flex-shrink-0 status-card">
-        <div class="card-body py-3">
-            <div class="row align-items-center">
-                <div class="col-md-2">
-                    <div class="d-flex align-items-center">
-                        <div class="status-indicator @(IsRunning ? "status-running" : "status-idle") me-3"></div>
-                        <div>
-                            <div class="stat-label">Status</div>
-                            <div class="stat-value">@(IsRunning ? "Running" : "Idle")</div>
+    <!-- Beautiful Progress Dashboard -->
+    <div class="progress-dashboard mb-4">
+        <div class="row g-3">
+            <!-- Status Card -->
+            <div class="col-md-3">
+                <div class="progress-card status-card">
+                    <div class="progress-card-header">
+                        <i class="fas fa-power-off progress-icon"></i>
+                        <span class="progress-label">Status</span>
+                    </div>
+                    <div class="progress-card-body">
+                        <div class="status-indicator-wrapper">
+                            <div class="status-indicator @(IsRunning ? "status-running" : "status-idle")">
+                                @if (IsRunning)
+                                {
+                                    <div class="pulse-ring"></div>
+                                    <div class="pulse-ring pulse-ring-delay"></div>
+                                }
+                            </div>
+                            <span class="status-text">@(IsRunning ? "Running" : "Idle")</span>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-2">
-                    <div class="text-center">
-                        <div class="stat-label">Duration</div>
-                        <div class="stat-value">@GetDurationString()</div>
+            </div>
+
+            <!-- Duration Card -->
+            <div class="col-md-3">
+                <div class="progress-card duration-card">
+                    <div class="progress-card-header">
+                        <i class="fas fa-clock progress-icon"></i>
+                        <span class="progress-label">Duration</span>
                     </div>
-                </div>
-                <div class="col-md-3">
-                    <div class="text-center">
-                        <div class="stat-label">Vehicles Progress</div>
-                        <div class="stat-value">
-                            @ProcessStateService.ProcessedVehicles / @ProcessStateService.TotalVehicles
-                            @if (ProcessStateService.TotalVehicles > 0)
+                    <div class="progress-card-body">
+                        <div class="duration-display">
+                            <span class="duration-time">@GetDurationString()</span>
+                            @if (IsRunning)
                             {
-                                <small class="text-muted">(@(Math.Round((double)ProcessStateService.ProcessedVehicles / ProcessStateService.TotalVehicles * 100, 1))%)</small>
+                                <div class="duration-pulse"></div>
                             }
                         </div>
                     </div>
                 </div>
-                <div class="col-md-5">
-                    <div class="text-center">
-                        <div class="stat-label">Violations Found</div>
-                        <div class="stat-value text-success">@ProcessStateService.ViolationCount</div>
+            </div>
+
+            <!-- Progress Card -->
+            <div class="col-md-3">
+                <div class="progress-card progress-card-main">
+                    <div class="progress-card-header">
+                        <i class="fas fa-tasks progress-icon"></i>
+                        <span class="progress-label">Progress</span>
+                    </div>
+                    <div class="progress-card-body">
+                        @if (IsRunning && ProcessStateService.TotalVehicles > 0)
+                        {
+                            <div class="progress-display">
+                                <div class="progress-percentage">
+                                    @(Math.Round((double)ProcessStateService.ProcessedVehicles / ProcessStateService.TotalVehicles * 100, 0))%
+                                </div>
+                                <div class="progress-fraction">
+                                    @ProcessStateService.ProcessedVehicles / @ProcessStateService.TotalVehicles
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="progress-idle">
+                                <i class="fas fa-hourglass-start"></i>
+                                <span class="progress-text">Ready</span>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <!-- Violations Card -->
+            <div class="col-md-3">
+                <div class="progress-card violations-card">
+                    <div class="progress-card-header">
+                        <i class="fas fa-exclamation-triangle progress-icon"></i>
+                        <span class="progress-label">Violations Found</span>
+                    </div>
+                    <div class="progress-card-body">
+                        <div class="violations-counter">
+                            <span class="violations-count">@ProcessStateService.ViolationCount</span>
+                            @if (ProcessStateService.ViolationCount > 0)
+                            {
+                                <div class="violations-pulse"></div>
+                            }
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
+        
+        <!-- Progress Bar Section -->
+        @if (IsRunning && ProcessStateService.TotalVehicles > 0)
+        {
+            <div class="progress-section">
+                <div class="progress-container">
+                    <div class="progress-header">
+                        <span class="progress-label">Processing Vehicles...</span>
+                        <span class="progress-stats">
+                            @ProcessStateService.ProcessedVehicles / @ProcessStateService.TotalVehicles 
+                            (@(Math.Round((double)ProcessStateService.ProcessedVehicles / ProcessStateService.TotalVehicles * 100, 1))%)
+                        </span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: @(Math.Round((double)ProcessStateService.ProcessedVehicles / ProcessStateService.TotalVehicles * 100, 1))%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
     </div>
 
     <!-- Log Container -->

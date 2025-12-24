@@ -29,7 +29,7 @@ public class CitationService : ICitationService
     {
         { CitationProviderType.Metropolis, 200 },
         { CitationProviderType.Vanguard, 200 },
-        { CitationProviderType.ProfessionalParkingManagement, 1500 },
+        { CitationProviderType.ProfessionalParkingManagement, 400 },
         { CitationProviderType.CityOfFortLauderdale, 100 }
     };
     
@@ -218,9 +218,9 @@ public class CitationService : ICitationService
                 vehicles.Length,
                 availableProviders.Count);
             
-            // Set up progress tracking
-            _processStateService.ResetProgress();
+            // Set up progress tracking with vehicle count
             _processStateService.SetTotalVehicles(vehicles.Length);
+            _processStateService.ResetProgress();
             
             cancellationToken.ThrowIfCancellationRequested();
             
