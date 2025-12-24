@@ -67,15 +67,8 @@ public class PpmCitationReader : ICitationReader
             var formActionUrl = ExtractFormActionUrl(pageContent);
             var formContent = new FormUrlEncodedContent(formData);
             
-            // Add delay to mimic human behavior
-            await Task.Delay(1500);
-            
             // Step 3: Submit form
             var submitResponse = await SubmitFormAsync(formActionUrl, formContent);
-            if (submitResponse.Message.Contains("Token"))
-            {
-                
-            }
             if (!submitResponse.IsSuccess)
             {
                 _logger.LogWarning("Form submission failed for {CarDetails}: {Error}", carDetails, submitResponse.Message);

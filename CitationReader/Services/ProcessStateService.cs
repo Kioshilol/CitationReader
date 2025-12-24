@@ -82,6 +82,7 @@ public class ProcessStateService : IProcessStateService
         lock (_stateLock)
         {
             _isProcessRunning = false;
+            _processStartTime = null; // Reset start time to clear duration
         }
     }
 

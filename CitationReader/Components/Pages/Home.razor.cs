@@ -41,11 +41,7 @@ public partial class Home : ComponentBase, IDisposable
 
     protected override void OnInitialized()
     {
-        _uiUpdateTimer = new Timer(
-            async _ => await InvokeAsync(StateHasChanged),
-            null, 
-            TimeSpan.FromSeconds(1),
-            TimeSpan.FromSeconds(1));
+        // Timer will be started only when process is running
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -94,6 +90,10 @@ public partial class Home : ComponentBase, IDisposable
         
         ProcessStateService.StartProcess();
         ProcessStateService.ResetProgress();
+        
+        // Start UI update timer only when process is running
+        StartUiUpdateTimer();
+        
         StateHasChanged();
 
         try
@@ -165,6 +165,8 @@ public partial class Home : ComponentBase, IDisposable
                 finally
                 {
                     ProcessStateService.StopProcess();
+                    StopUiUpdateTimer(); // Stop timer when process completes
+                    _runningTask = null; // Clear the task reference
                     await InvokeAsync(StateHasChanged);
                 }
             }, _cancellationTokenSource.Token);
@@ -217,6 +219,8 @@ public partial class Home : ComponentBase, IDisposable
         }
         
         ProcessStateService.StopProcess();
+        StopUiUpdateTimer(); // Stop timer when process is manually stopped
+        _runningTask = null; // Clear the task reference after stopping
         _isStopping = false;
         StateHasChanged();
     }
@@ -366,10 +370,29 @@ public partial class Home : ComponentBase, IDisposable
         }
     }
 
+    private void StartUiUpdateTimer()
+    {
+        // Stop any existing timer first
+        StopUiUpdateTimer();
+        
+        // Create and start new timer
+        _uiUpdateTimer = new Timer(
+            async _ => await InvokeAsync(StateHasChanged),
+            null,
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(1));
+    }
+
+    private void StopUiUpdateTimer()
+    {
+        _uiUpdateTimer?.Dispose();
+        _uiUpdateTimer = null;
+    }
+
     public void Dispose()
     {
         _cancellationTokenSource?.Cancel();
         _cancellationTokenSource?.Dispose();
-        _uiUpdateTimer?.Dispose();
+        StopUiUpdateTimer(); // Use helper method for proper cleanup
     }
 }

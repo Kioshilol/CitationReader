@@ -26,10 +26,6 @@ public class BaseHostedPortalParseReader : IDisposable
 
     private const int MaxRetries = 3;
     private const int RetryDelayMs = 1500;
-    private const int RequestTimeoutMs = 30000;
-    private const int MinDelayBetweenSearchesMs = 2000; // 2 seconds between searches for bulk processing
-    private const int MaxConsecutiveSearches = 10; // Reset session after 10 searches
-    private const int BulkProcessingThreshold = 10; // If more than 10 searches in 5 minutes, use bulk mode
 
     private readonly string _baseUrl;
     private readonly string _portalUrl;
@@ -37,11 +33,6 @@ public class BaseHostedPortalParseReader : IDisposable
     private readonly string _agency;
     private bool _disposed;
     private HttpClient _httpClient;
-    
-    // Static fields for rate limiting across all instances
-    private static DateTime _lastSearchTime = DateTime.MinValue;
-    private static int _consecutiveSearchCount = 0;
-    private static readonly object _rateLimitLock = new object();
     
     protected readonly ILogger Logger;
 
@@ -86,99 +77,71 @@ public class BaseHostedPortalParseReader : IDisposable
         {
             Logger.LogInformation("Starting citation search for {CarDetails}", carDetails);
 
-            // Apply rate limiting for multiple searches
-            await ApplyRateLimiting(carDetails);
-
-            // Try multiple approaches to avoid ASP.NET errors
-            for (var sessionAttempt = 0; sessionAttempt < 2; sessionAttempt++)
+            // Set headers
+            SetFormSubmissionHeaders();
+            
+            // Step 1: Simulate full browser session - start with home page
+            await SimulateBrowserSession();
+            
+            // Step 2: Load portal page to get cookies and token
+            var portalResponse = await GetPageWithRetryAsync(_portalUrl);
+            if (!portalResponse.IsSuccess)
             {
-                try
-                {
-                    Logger.LogDebug("Starting session attempt {Attempt} for {CarDetails}", sessionAttempt + 1, carDetails);
-                    
-                    // Reset headers for each session attempt
-                    SetFormSubmissionHeaders();
-                    
-                    // Step 1: Simulate full browser session - start with home page
-                    await SimulateBrowserSession();
-                    
-                    // Step 2: Load portal page to get cookies and token
-                    var portalResponse = await GetPageWithRetryAsync(_portalUrl);
-                    if (!portalResponse.IsSuccess)
-                    {
-                        Logger.LogWarning("Failed to load portal page for {CarDetails}: {Error}", carDetails, portalResponse.Message);
-                        if (sessionAttempt == 1) // Last attempt
-                            return BaseResponse<List<ParkingViolation>>.Failure(portalResponse.Reason, 
-                                portalResponse.Message ?? "Failed to load portal page");
-                        continue;
-                    }
+                Logger.LogWarning("Failed to load portal page for {CarDetails}: {Error}", carDetails, portalResponse.Message);
+                return BaseResponse<List<ParkingViolation>>.Failure(portalResponse.Reason, 
+                    portalResponse.Message ?? "Failed to load portal page");
+            }
 
-                    // Step 3: Parse verification token
-                    var token = ExtractVerificationToken(portalResponse.Result);
-                    if (string.IsNullOrEmpty(token))
-                    {
-                        Logger.LogWarning("Could not extract verification token for {CarDetails}", carDetails);
-                        // Continue without token - some sites might work without it
-                    }
-                    else
-                    {
-                        Logger.LogDebug("Successfully extracted verification token for {CarDetails}", carDetails);
-                    }
+            // Step 3: Parse verification token
+            var token = ExtractVerificationToken(portalResponse.Result);
+            if (string.IsNullOrEmpty(token))
+            {
+                Logger.LogWarning("Could not extract verification token for {CarDetails}", carDetails);
+                // Continue without token - some sites might work without it
+            }
+            else
+            {
+                Logger.LogDebug("Successfully extracted verification token for {CarDetails}", carDetails);
+            }
 
-                    // Step 4: Convert state code to ID
-                    if (!TryGetStateId(stateCode, out var stateId))
-                    {
-                        Logger.LogWarning("Invalid state code provided: {StateCode}", stateCode);
-                        return BaseResponse<List<ParkingViolation>>.Failure(400, $"Invalid state code: {stateCode}");
-                    }
+            // Step 4: Convert state code to ID
+            if (!TryGetStateId(stateCode, out var stateId))
+            {
+                Logger.LogWarning("Invalid state code provided: {StateCode}", stateCode);
+                return BaseResponse<List<ParkingViolation>>.Failure(400, $"Invalid state code: {stateCode}");
+            }
 
-                    Logger.LogDebug("Converted state {StateCode} to ID {StateId}", stateCode, stateId);
+            Logger.LogDebug("Converted state {StateCode} to ID {StateId}", stateCode, stateId);
 
-                    // Add longer delay to mimic human behavior
-                    await Task.Delay(3000 + (sessionAttempt * 2000));
-                    
-                    // Step 5: Submit search with retry logic
-                    var searchResponse = await SubmitSearchWithRetryAsync(plateNumber, stateId, token, carDetails);
-                    if (!searchResponse.IsSuccess)
-                    {
-                        if (sessionAttempt == 1) // Last attempt
-                            return BaseResponse<List<ParkingViolation>>.Failure(searchResponse.Reason, searchResponse.Message);
-                        continue;
-                    }
+            // Step 5: Submit search with retry logic
+            var searchResponse = await SubmitSearchWithRetryAsync(plateNumber, stateId, token, carDetails);
+            if (!searchResponse.IsSuccess)
+            {
+                return BaseResponse<List<ParkingViolation>>.Failure(searchResponse.Reason, searchResponse.Message);
+            }
 
-                    var resultPath = GetResultPath(searchResponse.Result);
-                    if (string.IsNullOrEmpty(resultPath))
-                    {
-                        Logger.LogInformation("No citations found for {CarDetails}", carDetails);
-                        return BaseResponse<List<ParkingViolation>>.Success(new List<ParkingViolation>());
-                    }
+            var resultPath = GetResultPath(searchResponse.Result);
+            if (string.IsNullOrEmpty(resultPath))
+            {
+                Logger.LogInformation("No citations found for {CarDetails}", carDetails);
+                return BaseResponse<List<ParkingViolation>>.Success(new List<ParkingViolation>());
+            }
 
-                    // Step 6: Get and parse results with retry logic for ASP.NET errors
-                    var resultUrl = $"{_baseUrl}{resultPath}";
-                    
-                    var resultResponse = await GetResultsWithRetryAsync(resultUrl, carDetails);
-                    if (!resultResponse.IsSuccess)
-                    {
-                        if (sessionAttempt == 1) // Last attempt
-                            return BaseResponse<List<ParkingViolation>>.Failure(resultResponse.Reason, resultResponse.Message);
-                        continue;
-                    }
-                    
-                    var resultHtml = resultResponse.Result;
-                 
-                    var citations = ParseCitations(resultHtml, plateNumber, stateCode);
-                    Logger.LogInformation("Found {CitationCount} citations for {CarDetails}", citations.Count, carDetails);
-                    
-                    return BaseResponse<List<ParkingViolation>>.Success(citations);
-                }
-                catch (Exception ex) when (sessionAttempt < 1)
-                {
-                    Logger.LogWarning(ex, "Session attempt {Attempt} failed for {CarDetails}, trying again...", sessionAttempt + 1, carDetails);
-                    await Task.Delay(5000); // Wait before next session attempt
-                }
+            // Step 6: Get and parse results with retry logic for ASP.NET errors
+            var resultUrl = $"{_baseUrl}{resultPath}";
+            
+            var resultResponse = await GetResultsWithRetryAsync(resultUrl, carDetails);
+            if (!resultResponse.IsSuccess)
+            {
+                return BaseResponse<List<ParkingViolation>>.Failure(resultResponse.Reason, resultResponse.Message);
             }
             
-            return BaseResponse<List<ParkingViolation>>.Failure(-1, "All session attempts failed due to server errors");
+            var resultHtml = resultResponse.Result;
+         
+            var citations = ParseCitations(resultHtml, plateNumber, stateCode);
+            Logger.LogInformation("Found {CitationCount} citations for {CarDetails}", citations.Count, carDetails);
+            
+            return BaseResponse<List<ParkingViolation>>.Success(citations);
         }
         catch (Exception ex)
         {
@@ -389,8 +352,8 @@ public class BaseHostedPortalParseReader : IDisposable
             if (homePageResponse.IsSuccessStatusCode)
             {
                 Logger.LogDebug("Successfully visited home page");
-                // Small delay to mimic human browsing
-                await Task.Delay(1000);
+                //TODO: check how works
+                //await Task.Delay(1000);
             }
             else
             {
@@ -403,56 +366,6 @@ public class BaseHostedPortalParseReader : IDisposable
         }
     }
 
-    private async Task ApplyRateLimiting(string carDetails)
-    {
-        lock (_rateLimitLock)
-        {
-            var now = DateTime.UtcNow;
-            var timeSinceLastSearch = now - _lastSearchTime;
-            
-            // Check if we need to reset the session after too many consecutive searches
-            if (_consecutiveSearchCount >= MaxConsecutiveSearches)
-            {
-                Logger.LogInformation("Resetting session after {Count} consecutive searches - taking a 10 second break", _consecutiveSearchCount);
-                _consecutiveSearchCount = 0;
-                _lastSearchTime = now.AddMilliseconds(10000); // 10 second break
-            }
-            else
-            {
-                // For bulk processing, use minimal delays but still respect server limits
-                var requiredDelay = MinDelayBetweenSearchesMs;
-                
-                // Only add extra delay if we're getting close to the reset threshold
-                if (_consecutiveSearchCount >= 7) // Last 3 searches before reset
-                {
-                    requiredDelay += 1000; // Add just 1 second extra
-                }
-                
-                var actualDelay = Math.Max(0, requiredDelay - (int)timeSinceLastSearch.TotalMilliseconds);
-                
-                if (actualDelay > 0)
-                {
-                    Logger.LogDebug("Rate limiting: waiting {Delay}ms before search for {CarDetails} (consecutive search #{Count})", 
-                        actualDelay, carDetails, _consecutiveSearchCount + 1);
-                }
-                
-                _consecutiveSearchCount++;
-                _lastSearchTime = now.AddMilliseconds(actualDelay);
-            }
-        }
-        
-        // Apply the delay outside the lock
-        var delayToApply = Math.Max(0, (int)(_lastSearchTime - DateTime.UtcNow).TotalMilliseconds);
-        if (delayToApply > 0)
-        {
-            if (delayToApply > 5000) // Only log longer delays
-            {
-                Logger.LogInformation("Taking a {Delay}ms break before searching {CarDetails} to let server recover", 
-                    delayToApply, carDetails);
-            }
-            await Task.Delay(delayToApply);
-        }
-    }
 
     private void SetFormSubmissionHeaders()
     {
@@ -544,7 +457,6 @@ public class BaseHostedPortalParseReader : IDisposable
 
             // Select all citation rows (skip the header row)
             var citationRows = doc.DocumentNode.SelectNodes("//table[@id='citations-list-table']//tr[starts-with(@id, 'citation')]");
-
             if (citationRows != null)
             {
                 foreach (var row in citationRows)

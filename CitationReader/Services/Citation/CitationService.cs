@@ -23,14 +23,14 @@ public class CitationService : ICitationService
     // Provider-specific rate limiting
     private static readonly Dictionary<CitationProviderType, SemaphoreSlim> ProviderSemaphores = new();
     private static readonly Dictionary<CitationProviderType, DateTime> ProviderLastRequest = new();
-    private static readonly object ProviderLock = new();
+    private static readonly Dictionary<CitationProviderType, object> ProviderLocks = new();
     
     private static readonly Dictionary<CitationProviderType, int> ProviderDelays = new()
     {
         { CitationProviderType.Metropolis, 200 },
         { CitationProviderType.Vanguard, 200 },
-        { CitationProviderType.ProfessionalParkingManagement, 200 },
-        { CitationProviderType.CityOfFortLauderdale, 500 }
+        { CitationProviderType.ProfessionalParkingManagement, 1500 },
+        { CitationProviderType.CityOfFortLauderdale, 100 }
     };
     
     private static readonly Dictionary<CitationProviderType, int> ProviderConcurrency = new()
@@ -38,7 +38,7 @@ public class CitationService : ICitationService
         { CitationProviderType.Metropolis, 10 },
         { CitationProviderType.Vanguard, 10 },       
         { CitationProviderType.ProfessionalParkingManagement, 10 }, 
-        { CitationProviderType.CityOfFortLauderdale, 2 }
+        { CitationProviderType.CityOfFortLauderdale, 1 }
     };
 
     public CitationService(
@@ -64,16 +64,14 @@ public class CitationService : ICitationService
     
     private static void InitializeProviderSemaphores()
     {
-        lock (ProviderLock)
+        foreach (var provider in Enum.GetValues<CitationProviderType>())
         {
-            foreach (var provider in Enum.GetValues<CitationProviderType>())
+            if (!ProviderSemaphores.ContainsKey(provider))
             {
-                if (!ProviderSemaphores.ContainsKey(provider))
-                {
-                    var concurrency = ProviderConcurrency.GetValueOrDefault(provider, 1);
-                    ProviderSemaphores[provider] = new SemaphoreSlim(concurrency, concurrency);
-                    ProviderLastRequest[provider] = DateTime.MinValue;
-                }
+                var concurrency = ProviderConcurrency.GetValueOrDefault(provider, 1);
+                ProviderSemaphores[provider] = new SemaphoreSlim(concurrency, concurrency);
+                ProviderLastRequest[provider] = DateTime.MinValue;
+                ProviderLocks[provider] = new object(); // Каждый провайдер получает свой lock
             }
         }
     }
@@ -89,8 +87,8 @@ public class CitationService : ICitationService
         
         try
         {
-            // Apply timing delay
-            lock (ProviderLock)
+            // Apply timing delay using provider-specific lock
+            lock (ProviderLocks[provider])
             {
                 var now = DateTime.UtcNow;
                 var timeSinceLastRequest = now - ProviderLastRequest[provider];
@@ -133,7 +131,7 @@ public class CitationService : ICitationService
             if (!_readers.TryGetValue(provider, out var reader))
             {
                 _logger.LogWarning("No reader found for provider {Provider}", provider);
-                return Enumerable.Empty<CitationModel>();
+                return [];
             }
             
             _logger.LogDebug("Processing plate {LicensePlate} ({State}) with provider {Provider}", licensePlate, state, provider);
