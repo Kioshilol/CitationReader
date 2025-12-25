@@ -94,31 +94,26 @@ public class MetropolisCitationReader : BaseHttpReader, ICitationReader
 
     private IEnumerable<CitationModel> ProduceItems(IEnumerable<MetropolisApiResponse.Violation> items)
     {
-        foreach (var item in items)
+        return items.Select(item => new CitationModel
         {
-            var parkingViolation = new CitationModel
-            {
-                NoticeNumber = item.ExtId,
-                Agency = CitationProviderType.Metropolis.GetDisplayName(),
-                Address = $"{item.ViolationItemView.SiteAddressInfo.Street}," +
-                          $" {item.ViolationItemView.SiteAddressInfo.City}," +
-                          $" {item.ViolationItemView.SiteAddressInfo.StateCode}" +
-                          $" {item.ViolationItemView.SiteAddressInfo.Zip}",
-                Tag = item.ViolationItemView.LicensePlate,
-                State = item.ViolationItemView.LicensePlateState,
-                IssueDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.ViolationIssued).DateTime,
-                StartDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.VisitStart).DateTime,
-                EndDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.VisitEnd).DateTime,
-                Amount = item.ViolationItemView.TotalAmount,
-                Currency = Constants.Currency,
-                PaymentStatus = (int)PaymentStatus.New,
-                FineType = (int)FineType.Parking,
-                IsActive = true,
-                Link = Link,
-                Note = $"Reason: {item.ViolationItemView.Reason.Name}, Description: {item.ViolationItemView.Reason.Description}",
-            };
-
-            yield return parkingViolation;
-        }
+            NoticeNumber = item.ExtId,
+            Agency = CitationProviderType.Metropolis.GetDisplayName(),
+            Address = $"{item.ViolationItemView.SiteAddressInfo.Street}," +
+                      $" {item.ViolationItemView.SiteAddressInfo.City}," +
+                      $" {item.ViolationItemView.SiteAddressInfo.StateCode}" +
+                      $" {item.ViolationItemView.SiteAddressInfo.Zip}",
+            Tag = item.ViolationItemView.LicensePlate,
+            State = item.ViolationItemView.LicensePlateState,
+            IssueDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.ViolationIssued).DateTime,
+            StartDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.VisitStart).DateTime,
+            EndDate = DateTimeOffset.FromUnixTimeMilliseconds(item.ViolationItemView.VisitEnd).DateTime,
+            Amount = item.ViolationItemView.TotalAmount,
+            Currency = Constants.Currency,
+            PaymentStatus = (int)PaymentStatus.New,
+            FineType = (int)FineType.Parking,
+            IsActive = true,
+            Link = Link,
+            Note = $"Reason: {item.ViolationItemView.Reason.Name}, Description: {item.ViolationItemView.Reason.Description}",
+        });
     }
 }

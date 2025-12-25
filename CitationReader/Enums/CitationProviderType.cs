@@ -14,5 +14,11 @@ public enum CitationProviderType
     Metropolis,
     
     [Display(Name = "City of Fort Lauderdale")]
-    CityOfFortLauderdale
+    CityOfFortLauderdale,
+    
+    [Display(Name = "Miami Parking")]
+    MiamiParking,
+    
+    [Display(Name = "Parking Compliance")]
+    ParkingCompliance
 }

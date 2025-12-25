@@ -35,8 +35,6 @@ public class PpmCitationReader : ICitationReader
         
         try
         {
-            _logger.LogInformation("Starting citation search for {CarDetails} using PPM reader", carDetails);
-            
             // Step 1: Get the initial form page
             var initialResponse = await GetPageAsync(BaseUrl);
             if (!initialResponse.IsSuccess)

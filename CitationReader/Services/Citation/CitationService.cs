@@ -30,7 +30,9 @@ public class CitationService : ICitationService
         { CitationProviderType.Metropolis, 200 },
         { CitationProviderType.Vanguard, 200 },
         { CitationProviderType.ProfessionalParkingManagement, 400 },
-        { CitationProviderType.CityOfFortLauderdale, 100 }
+        { CitationProviderType.CityOfFortLauderdale, 100 },
+        { CitationProviderType.MiamiParking, 500 },
+        { CitationProviderType.ParkingCompliance, 500 }
     };
     
     private static readonly Dictionary<CitationProviderType, int> ProviderConcurrency = new()
@@ -38,7 +40,9 @@ public class CitationService : ICitationService
         { CitationProviderType.Metropolis, 10 },
         { CitationProviderType.Vanguard, 10 },       
         { CitationProviderType.ProfessionalParkingManagement, 10 }, 
-        { CitationProviderType.CityOfFortLauderdale, 1 }
+        { CitationProviderType.CityOfFortLauderdale, 1 },
+        { CitationProviderType.MiamiParking, 10 },
+        { CitationProviderType.ParkingCompliance, 10 }
     };
 
     public CitationService(
@@ -119,7 +123,7 @@ public class CitationService : ICitationService
     public async Task<IEnumerable<CitationModel>> ReadCitationsByProviderAndPlateNumberAsync(
         CitationProviderType provider, 
         string licensePlate, 
-        string state = "NY",
+        string state,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Starting citation lookup for plate '{LicensePlate}' in state '{State}' using provider '{Provider}'", licensePlate, state, provider);

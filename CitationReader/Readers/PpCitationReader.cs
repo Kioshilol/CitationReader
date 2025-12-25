@@ -1,4 +1,4 @@
-using CitationReader.Common;
+﻿using CitationReader.Common;
 using CitationReader.Enums;
 using CitationReader.Extensions;
 using CitationReader.Models.Base;
@@ -9,28 +9,27 @@ using CitationReader.Readers.Interfaces;
 
 namespace CitationReader.Readers;
 
-public class VanguardCitationReader : BaseHttpReader, ICitationReader
+public class PpCitationReader : BaseHttpReader, ICitationReader
 {
-    private const string Url = "https://www.payparkingnotice.com/api/";
+    private const string Url = "https://api.cpmdashboard.com/v1/violationapp/plate/";
     
-    public VanguardCitationReader()
+    public PpCitationReader() 
         : base(HttpClientType.HttpCitationReader)
     {
     }
 
-    public CitationProviderType SupportedProviderType => CitationProviderType.Vanguard;
-    public string Link => "https://www.payparkingnotice.com/";
+    public CitationProviderType SupportedProviderType => CitationProviderType.ParkingCompliance;
 
-    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(
-        string licensePlate,
-        string state)
+    public string Link => "https://ppnotice.com/";
+    
+    public async Task<BaseCitationResult<IEnumerable<CitationModel>>> ReadCitationsAsync(string licensePlate, string state)
     {
         var carDetails = $"{licensePlate} ({state})";
-        
+
         try
         {
-            var requestUrl = $"{Url}lookup?method=lpnLookup&lpn={Uri.EscapeDataString(licensePlate)}&lpnState={Uri.EscapeDataString(state)}&includeAll=true/";
-            var response = await RequestAsync<VanguardResponse>(
+            var requestUrl = $"{Url}{Uri.EscapeDataString(licensePlate)}";
+            var response = await RequestAsync<List<ParkingComplianceApiResponse>>(
                 HttpMethod.Get,
                 requestUrl,
                 null,
@@ -54,7 +53,7 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                 //     response.Reason);
             }
 
-            var notices = response.Result?.Notices;
+            var notices = response.Result;
             if (notices is null || !notices.Any())
             {
                 Logger.LogInformation("No citations found for vehicle: {CarDetails}", carDetails);
@@ -63,16 +62,14 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
                     state);
             }
             
-            var citations = ProduceItems(notices).ToList();
+            var citations = ProduceItems(notices, state).ToList();
             Logger.LogInformation("Found {Count} citations for vehicle: {CarDetails}", citations.Count, carDetails);
             
             return BaseCitationResult<IEnumerable<CitationModel>>.CreateSuccess(citations, state);
 
-            bool CreateSuccessResponseCallback(BaseResponse<VanguardResponse> baseResponse)
+            bool CreateSuccessResponseCallback(BaseResponse<List<ParkingComplianceApiResponse>> baseResponse)
             {
-                var errorMessage = baseResponse.Message ?? "";
-                return errorMessage.Contains("Error fetching data from external API") ||
-                       errorMessage.Contains("API request failed: 404 Not Found");
+                return false;
             }
         }
         catch (Exception ex)
@@ -91,37 +88,27 @@ public class VanguardCitationReader : BaseHttpReader, ICitationReader
         }
     }
     
-    private IEnumerable<CitationModel> ProduceItems(IEnumerable<VanguardResponse.Notice> items)
+    private IEnumerable<CitationModel> ProduceItems(
+        IEnumerable<ParkingComplianceApiResponse> items, 
+        string state)
     {
         return items.Select(item => new CitationModel
         {
             NoticeNumber = item.NoticeNumber,
             Agency = SupportedProviderType.GetDisplayName(),
-            Address = item.LotAddress,
-            Tag = item.Lpn,
-            State = item.LpnState,
-            IssueDate = item.NoticeDate == null
-                ? null
-                : DateTimeOffset.FromUnixTimeMilliseconds(item.NoticeDate.Ts).DateTime,
-            StartDate = ParseDateTime(item.EntryTime),
-            EndDate = ParseDateTime(item.ExitTime),
-            Amount = decimal.TryParse(item.AmountDue, out var amount) ? amount : 0,
+            Address = item.Lot.Address,
+            StartDate = item.EntryTime,
+            EndDate = item.ExitTime,
+            Tag = item.PlateNumber,
+            State = state,
+            IssueDate = item.EntryTime,
+            Amount = item.Fine,
             Currency = Constants.Currency,
-            PaymentStatus = item.TicketStatus.ToLower() != "Ready"
-                ? (int)PaymentStatus.New
-                : (int)PaymentStatus.Paid,
+            PaymentStatus = (int)(item.Status == "PAID" ? PaymentStatus.Paid : PaymentStatus.New),
             FineType = (int)FineType.Parking,
-            IsActive = item.TicketStatus.ToLower() != "Ready",
+            IsActive = item.Status != "RESOLVED",
             Link = Link,
-            CitationProviderType = SupportedProviderType,
-            Note = item.TicketStatus
+            Note = item.Status
         });
-    }
-    
-    private static DateTime ParseDateTime(string dateTimeString)
-    {
-        return DateTime.TryParse(dateTimeString, out var result) 
-            ? result 
-            : DateTime.MinValue;
     }
 }
