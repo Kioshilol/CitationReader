@@ -44,7 +44,7 @@ public class CitationService : ICitationService
         { CitationProviderType.CityOfFortLauderdale, 1 },
         { CitationProviderType.MiamiParking, 10 },
         { CitationProviderType.ParkingCompliance, 10 },
-        { CitationProviderType.CityOfKeyWest, 1 },
+        { CitationProviderType.CityOfKeyWest, 10 },
     };
 
     public CitationService(

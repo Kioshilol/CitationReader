@@ -28,7 +28,7 @@ public abstract class BaseRmcReader : BaseHttpReader
         try
         {
             var stateId = GetStateId(state);
-            var requestUrl = $"{Url}/rmcapi/api/violation_index.php/searchviolation?operatorid={Uri.EscapeDataString(OperatorId)}&stateid={Uri.EscapeDataString(stateId)}&lpn={Uri.EscapeDataString(licensePlate)}";
+            var requestUrl = $"{Url}/rmcapi/api/violation_index.php/searchviolation?operatorid={Uri.EscapeDataString(OperatorId)}&stateid={Uri.EscapeDataString(stateId)}&lpn={Uri.EscapeDataString(licensePlate)}&single_violation=0";
             var response = await RequestAsync<RmcPayResponse>(
                 HttpMethod.Get,
                 requestUrl,
