@@ -20,5 +20,8 @@ public enum CitationProviderType
     MiamiParking,
     
     [Display(Name = "Parking Compliance")]
-    ParkingCompliance
+    ParkingCompliance,
+    
+    [Display(Name = "City Of Key West")]
+    CityOfKeyWest
 }

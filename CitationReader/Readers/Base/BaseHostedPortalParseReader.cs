@@ -7,7 +7,7 @@ using HtmlAgilityPack;
 
 namespace CitationReader.Readers.Base;
 
-public class BaseHostedPortalParseReader : IDisposable
+public abstract class BaseHostedPortalParseReader : IDisposable
 {
     private static readonly Dictionary<string, string> StateToIdMap = new()
     {

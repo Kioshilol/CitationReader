@@ -1,4 +1,6 @@
+using CitationReader.Common;
 using CitationReader.Enums;
+using CitationReader.Extensions;
 using CitationReader.Models.Base;
 using CitationReader.Models.Citation.Internal;
 using System.Text.RegularExpressions;
@@ -271,7 +273,7 @@ public abstract class BaseParseReader
             {
                 NoticeNumber = cells.Length > 0 ? cells[0] : "",
                 CitationNumber = cells.Length > 1 ? cells[1] : "",
-                IssueDate = cells.Length > 2 ? ParseDateTime(cells[2]) : DateTime.MinValue,
+                IssueDate = cells.Length > 2 ? cells[2].ParseToDateTime() : DateTime.MinValue,
                 Amount = cells.Length > 3 ? ParseAmount(cells[3]) : 0,
                 Agency = ProviderName,
                 Tag = licensePlate,
@@ -336,13 +338,8 @@ public abstract class BaseParseReader
     
     protected virtual int DeterminePaymentStatus(string[] cells)
     {
-        var allText = string.Join(" ", cells).ToLower();
-        if (allText.Contains("paid") || allText.Contains("settled"))
-        {
-            return (int)PaymentStatus.Paid;
-        }
-        
-        return (int)PaymentStatus.New;
+        var allText = string.Join(" ", cells);
+        return (int)PaymentHelper.GetStatus(allText);
     }
     
     protected virtual bool DetermineIsActive(string[] cells)
@@ -492,15 +489,6 @@ public abstract class BaseParseReader
         return decimal.TryParse(numericText, out var amount) ? amount : 0;
     }
     
-    private static DateTime ParseDateTime(string dateText)
-    {
-        if (string.IsNullOrEmpty(dateText))
-        {
-            return DateTime.MinValue;
-        }
-        
-        return DateTime.TryParse(dateText, out var date) ? date : DateTime.MinValue;
-    }
     
     private List<KeyValuePair<string, string>> CreateFormData(string licensePlate)
     {

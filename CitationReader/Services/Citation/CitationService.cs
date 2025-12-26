@@ -32,7 +32,8 @@ public class CitationService : ICitationService
         { CitationProviderType.ProfessionalParkingManagement, 400 },
         { CitationProviderType.CityOfFortLauderdale, 100 },
         { CitationProviderType.MiamiParking, 500 },
-        { CitationProviderType.ParkingCompliance, 500 }
+        { CitationProviderType.ParkingCompliance, 500 },
+        { CitationProviderType.CityOfKeyWest, 500 },
     };
     
     private static readonly Dictionary<CitationProviderType, int> ProviderConcurrency = new()
@@ -42,7 +43,8 @@ public class CitationService : ICitationService
         { CitationProviderType.ProfessionalParkingManagement, 10 }, 
         { CitationProviderType.CityOfFortLauderdale, 1 },
         { CitationProviderType.MiamiParking, 10 },
-        { CitationProviderType.ParkingCompliance, 10 }
+        { CitationProviderType.ParkingCompliance, 10 },
+        { CitationProviderType.CityOfKeyWest, 1 },
     };
 
     public CitationService(
